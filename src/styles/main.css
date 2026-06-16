@@ -1,0 +1,1222 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Markup Studio — Design System
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Muted aubergine theme — deep stormy purple canvas, dark muted purple
+     surfaces, dusty purple interactive elements, light grey-purple text. */
+
+  /* Surfaces — three elevation levels */
+  --bg:        #1c1924;
+  --surface:   #2a2635;
+  --surface-2: #322d40;
+  --surface-3: #3a3449;
+
+  /* Borders */
+  --border:        #423b54;
+  --border-subtle: #332e44;
+
+  /* Text */
+  --text:   #d8d4e3;
+  --text-2: #a39dba;
+  --text-3: #6f6886;
+
+  /* Brand accents — dusty muted purple */
+  --markup:        #6b6280;
+  --markup-dim:    rgba(107, 98, 128, 0.22);
+  --markup-border: rgba(107, 98, 128, 0.55);
+  --measure:       #9a91b5;
+  --selection:     #9a91b5;
+
+  /* Status */
+  --saved: #6b6280;
+  --dirty: #d8d4e3;
+
+  /* Interactive states */
+  --hover:  rgba(216, 212, 227, 0.05);
+  --active: rgba(216, 212, 227, 0.1);
+
+  /* Page canvas */
+  --paper: #f4efe5;
+
+  /* Transitions */
+  --t: 130ms ease;
+
+  /* Typography — one family, three sizes used throughout the chrome */
+  --font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-xs:   11px;  /* uppercase labels, captions */
+  --font-sm:   12px;  /* body controls, panel content */
+  --font-md:   13px;  /* primary text, menubar */
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--font-md)/1.45 var(--font-family);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* All form controls inherit the same family by default */
+input, select, textarea, button {
+  font-family: inherit;
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* The main canvas scrollbar is wider so it's easy to grab */
+.workspace-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+.workspace-scroll::-webkit-scrollbar-thumb {
+  background: var(--text-3);
+  border-radius: 6px;
+  border: 3px solid var(--bg);
+  background-clip: padding-box;
+}
+.workspace-scroll::-webkit-scrollbar-thumb:hover { background: var(--selection); background-clip: padding-box; }
+
+/* ── App shell grid ────────────────────────────────────────────────────── */
+.app-shell {
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr auto;
+  height: 100%;
+}
+
+/* ── Shared chrome surface ─────────────────────────────────────────────── */
+.menubar,
+.doc-tabs,
+.ribbon,
+.overlay-bar,
+.status-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Menubar ───────────────────────────────────────────────────────────── */
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 8px;
+  height: 34px;
+}
+
+.app-mark {
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 2px;
+  margin-right: 4px;
+  border-right: 1px solid var(--border);
+  height: 100%;
+}
+
+.app-mark svg {
+  display: block;
+  opacity: 0.9;
+}
+
+.menu-nav {
+  display: flex;
+  gap: 0;
+  height: 100%;
+}
+
+.menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 11px;
+  height: 100%;
+  cursor: default;
+  font-size: var(--font-md);
+  color: var(--text-2);
+  transition: background var(--t), color var(--t);
+  user-select: none;
+}
+
+.menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.menu-item:hover .dropdown {
+  display: block;
+}
+
+.dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 186px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px 0;
+  z-index: 100;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.dropdown li {
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: var(--font-md);
+  color: var(--text);
+  transition: background var(--t);
+}
+
+.dropdown li:hover {
+  background: var(--surface-3);
+}
+
+.dropdown li.sep {
+  height: 1px;
+  padding: 0;
+  margin: 4px 6px;
+  background: var(--border);
+  cursor: default;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-left: 10px;
+  font-size: var(--font-sm);
+  max-width: 260px;
+  overflow: hidden;
+}
+
+.filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dirty);
+  flex-shrink: 0;
+  transition: background var(--t);
+}
+
+.dirty-dot.saved {
+  background: var(--saved);
+}
+
+.btn-save {
+  margin-left: auto;
+  background: var(--markup);
+  color: #fff;
+  border: none;
+  padding: 5px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: opacity var(--t), transform 80ms ease;
+}
+
+.btn-save:hover  { opacity: 0.88; }
+.btn-save:active { transform: scale(0.97); }
+
+/* ── Doc tabs ──────────────────────────────────────────────────────────── */
+.doc-tabs {
+  display: flex;
+  gap: 1px;
+  padding: 0 8px;
+  min-height: 26px;
+  align-items: flex-end;
+}
+
+.doc-tab {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+  color: var(--text-2);
+  padding: 4px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--font-sm);
+  transition: color var(--t), background var(--t);
+  max-width: 180px;
+  overflow: hidden;
+}
+
+.doc-tab:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.doc-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  border-bottom-color: var(--surface);
+}
+
+.tab-close {
+  opacity: 0;
+  font-size: var(--font-md);
+  line-height: 1;
+  color: var(--text-2);
+  transition: opacity var(--t), color var(--t);
+}
+
+.doc-tab:hover .tab-close {
+  opacity: 0.6;
+}
+
+.doc-tab:hover .tab-close:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+/* ── Ribbon ────────────────────────────────────────────────────────────── */
+.ribbon {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 20;   /* Ensure tooltips render above .main-area */
+  overflow: visible;
+}
+
+.ribbon-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 4px 7px;
+  border-right: 1px solid var(--border);
+  gap: 2px;
+}
+
+.ribbon-tools {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+/* Group title sits in the upper-left corner of the group. Fixed 16px header so
+   the icon row below it lines up with the page-default control row. */
+.ribbon-label {
+  font-size: var(--font-xs);
+  line-height: 16px;
+  letter-spacing: 0.055em;
+  color: var(--text-3);
+  text-transform: uppercase;
+  font-weight: 500;
+  user-select: none;
+  text-align: left;
+  padding-left: 2px;
+}
+
+/* ── Tool buttons (icon + tooltip) ─────────────────────────────────────── */
+.tool-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background var(--t), color var(--t), border-color var(--t);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.tool-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+  border-color: var(--border-subtle);
+}
+
+.tool-btn.active {
+  background: var(--markup-dim);
+  color: var(--markup);
+  border-color: var(--markup-border);
+}
+
+.tool-btn svg {
+  display: block;
+  pointer-events: none;
+  width: 20px;
+  height: 20px;
+}
+
+/* CSS tooltip — appears below the button */
+.tool-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-5px);
+  background: #090c10;
+  color: var(--text);
+  font-size: var(--font-xs);
+  line-height: 1.3;
+  padding: 5px 10px;
+  border-radius: 5px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.65);
+  z-index: 9999;
+  font-family: inherit;
+}
+
+.tool-btn[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── Page-default controls ─────────────────────────────────────────────── */
+/* No group title: the per-control sub-labels line up with the group titles of
+   the tool groups to the left, and the controls line up with their icon rows. */
+.ribbon-group.page-defaults {
+  flex-direction: column;
+  border-right: none;
+  padding: 4px 7px;
+}
+
+.page-default-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  /* Labels (top of each column) share a baseline */
+  align-items: flex-start;
+}
+
+/* Header row (16px, same as the tool-group titles) sits on top; the control
+   sits in a 38px row that matches the icon row, vertically centred so the
+   boxes line up with the centre of the tool icons. nowrap keeps every header a
+   single line (same height for all). */
+.page-default-controls label {
+  display: grid;
+  grid-template-rows: 16px 38px;
+  row-gap: 2px;
+  align-items: center;
+  justify-items: start;
+  font-size: var(--font-xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* Overlay / Snip icon buttons have no sub-label — drop them into the 38px
+   content row (header 16px + gap 2px) so they align with the left-group icons */
+.page-default-controls > .tool-btn {
+  margin-top: 18px;
+}
+
+/* Long & thin color boxes with a light-purple frame, centred in the control
+   row so they sit level with the dropdowns / tool icons. Kept low-profile so
+   they don't read too strongly in the bar. */
+.page-default-controls input[type='color'] {
+  width: 52px;
+  height: 15px;
+  border: 1px solid var(--selection);
+  outline: none;
+  box-shadow: none;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  align-self: center;
+}
+
+.page-default-controls input[type='color']::-webkit-color-swatch-wrapper { padding: 0; }
+.page-default-controls input[type='color']::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+/* Page-default color boxes are buttons that open a palette popup */
+.page-default-controls .color-box {
+  width: 52px;
+  height: 15px;
+  border: 1px solid var(--selection);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  align-self: center;
+  background: var(--paper);
+}
+
+/* ── Color palette popup ───────────────────────────────────────────────── */
+.color-popup {
+  position: fixed;
+  z-index: 1000;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.color-popup-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+.color-popup .swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid rgba(216, 212, 227, 0.25);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.08s ease;
+}
+
+.color-popup .swatch:hover { transform: scale(1.15); border-color: #fff; }
+.color-popup .swatch.active { border: 2px solid #fff; }
+
+.color-popup-more {
+  font-size: var(--font-xs);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 4px;
+  padding: 5px 6px;
+  cursor: pointer;
+  transition: color var(--t), border-color var(--t);
+}
+
+.color-popup-more:hover { color: var(--text); border-color: var(--text-3); }
+
+.page-default-controls select {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--font-sm);
+  font-family: inherit;
+  height: 24px;
+  min-width: 68px;
+  cursor: pointer;
+  transition: border-color var(--t);
+  appearance: auto;
+}
+
+.page-default-controls select:hover {
+  border-color: var(--text-3);
+}
+
+/* ── Overlay bar ───────────────────────────────────────────────────────── */
+.overlay-bar {
+  padding: 6px 12px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+/* Stay a (zero-height) grid item when hidden so the flexible 1fr track keeps
+   landing on .main-area — display:none would shift it onto the status bar and
+   shrink the canvas (most visible on first open, before a page is loaded). */
+.overlay-bar.hidden {
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+}
+
+.overlay-slot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.overlay-slot select {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: var(--font-sm);
+}
+
+.overlay-multiply {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.overlay-multiply input[type='checkbox'] {
+  accent-color: var(--markup);
+  cursor: pointer;
+}
+
+/* ── Main area grid ────────────────────────────────────────────────────── */
+.main-area {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  min-height: 0;
+  position: relative;
+}
+
+/* ── Side panels ───────────────────────────────────────────────────────── */
+.left-panel,
+.right-panel {
+  background: var(--surface);
+  display: flex;
+  flex-direction: row;
+  position: relative;
+  min-height: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.left-panel {
+  border-right: 1px solid var(--border);
+}
+
+.right-panel {
+  border-left: 1px solid var(--border);
+  flex-direction: row;
+}
+
+.left-panel.collapsed,
+.right-panel.collapsed {
+  width: 0 !important;
+}
+
+.left-panel.collapsed .panel-inner,
+.right-panel.collapsed .panel-inner,
+.left-panel.collapsed .left-resizer,
+.right-panel.collapsed .right-resizer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.panel-inner {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Panel resizer ─────────────────────────────────────────────────────── */
+.panel-resizer {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+  z-index: 4;
+  transition: background var(--t);
+}
+
+.panel-resizer:hover,
+.panel-resizer:active {
+  background: var(--selection);
+}
+
+/* ── Panel toggle buttons ──────────────────────────────────────────────── */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  z-index: 31;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 10px 5px;
+  line-height: 1;
+  font-size: var(--font-xs);
+  pointer-events: auto;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  min-width: 16px;
+  transition: color var(--t), background var(--t), border-color var(--t);
+}
+
+.panel-toggle:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.panel-toggle.panel-collapsed {
+  background: var(--surface-2);
+  border-color: var(--markup-border);
+  color: var(--markup);
+}
+
+.panel-toggle.left-toggle  { border-radius: 0 5px 5px 0; }
+.panel-toggle.right-toggle { border-radius: 5px 0 0 5px; }
+
+/* When tucked inside an unfolded panel the rounding flips to face inward, and
+   the button sits flat against the surface (no canvas drop shadow) */
+.panel-toggle.left-toggle.inside-panel  { border-radius: 5px 0 0 5px; }
+.panel-toggle.right-toggle.inside-panel { border-radius: 0 5px 5px 0; }
+.panel-toggle.inside-panel {
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+/* ── Panel tabs ────────────────────────────────────────────────────────── */
+.panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.panel-tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-3);
+  padding: 8px 6px;
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: color var(--t), border-color var(--t);
+}
+
+.panel-tabs button:hover {
+  color: var(--text-2);
+}
+
+.panel-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--markup);
+}
+
+/* ── Panel content ─────────────────────────────────────────────────────── */
+.panel-content {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 6px;
+}
+
+/* ── Thumbnail items ───────────────────────────────────────────────────── */
+.thumb-item {
+  margin-bottom: 6px;
+  padding: 5px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: center;
+  font-size: var(--font-xs);
+  color: var(--text-3);
+  transition: border-color var(--t), background var(--t), color var(--t);
+}
+
+.thumb-item:hover {
+  border-color: var(--border);
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.thumb-item.active {
+  border-color: var(--selection);
+  color: var(--text);
+}
+
+.thumb-item canvas {
+  display: block;
+  width: 100%;
+  background: var(--paper);
+  border-radius: 2px;
+  margin-bottom: 4px;
+}
+
+/* ── Center column ─────────────────────────────────────────────────────── */
+.center-column {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+  /* A dark gutter between the canvas scrollbar and the right panel so the
+     scrollbar reads as separate from the panel instead of blending into it */
+  border-right: 5px solid var(--bg);
+}
+
+.viewer-stack {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.panel-edge-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.viewer-stack.split-v { flex-direction: row; }
+.viewer-stack.split-h { flex-direction: column; }
+
+.viewer-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.viewer-pane.secondary {
+  border-left: 1px solid var(--border);
+}
+
+.viewer-pane.secondary.hidden {
+  display: none;
+}
+
+.split-divider {
+  width: 4px;
+  background: var(--border);
+  cursor: col-resize;
+  transition: background var(--t);
+}
+
+.split-divider:hover {
+  background: var(--selection);
+}
+
+.viewer-stack.split-h .split-divider {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
+}
+
+.split-divider.hidden { display: none; }
+
+.pane-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: var(--font-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--t), background var(--t);
+}
+
+.pane-close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+/* ── Workspace ─────────────────────────────────────────────────────────── */
+.workspace {
+  height: 100%;
+  position: relative;
+}
+
+.workspace-scroll {
+  height: 100%;
+  overflow: auto;
+}
+
+.workspace-content {
+  /* content-box so width:max-content sizes to the pages, with the padding
+     added OUTSIDE — this keeps every page edge reachable when zoomed in
+     (flex centering alone makes overflowed edges unscrollable) and gives
+     160px of pan slack past the page on all four sides. Keep the 160 in
+     sync with CONTENT_PAD in Workspace.ts. */
+  box-sizing: content-box;
+  padding: 160px;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.page-wrapper {
+  background: var(--paper);
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.55), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.page-view    { position: relative; }
+.page-layer   { position: absolute; top: 0; left: 0; }
+.pdf-layer    { position: relative; }
+
+/* In-place text editor for Text / Callout / Sticky tools */
+.inline-text-editor {
+  position: absolute;
+  z-index: 6;
+  background: #fffef5;
+  color: #1d1d1d;
+  border: 1.5px solid #6b6280;
+  border-radius: 2px;
+  font: var(--font-sm)/1.35 var(--font-family);
+  padding: 3px 5px;
+  resize: both;
+  min-width: 100px;
+  min-height: 28px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  outline: none;
+}
+
+/* Bare variant — types directly inside the callout box drawn beneath it */
+.inline-text-editor--bare {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 4px 5px;
+}
+
+/* Control-point cursors: open hand on hover, closed hand while dragging */
+.svg-layer circle[data-handle] {
+  cursor: grab;
+}
+body.grabbing,
+body.grabbing * {
+  cursor: grabbing !important;
+}
+
+/* ── Empty state ───────────────────────────────────────────────────────── */
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-3);
+  pointer-events: none;
+  font-size: var(--font-md);
+  user-select: none;
+}
+
+.empty-state::before {
+  content: '';
+  display: block;
+  width: 48px;
+  height: 58px;
+  border: 2px dashed var(--border);
+  border-radius: 4px;
+  opacity: 0.5;
+}
+
+.workspace.drag-over .empty-state {
+  color: var(--markup);
+}
+
+.workspace.drag-over .empty-state::before {
+  border-color: var(--markup);
+  opacity: 0.8;
+}
+
+/* ── HUD controls ──────────────────────────────────────────────────────── */
+.hud-scale,
+.hud-page,
+.hud-zoom {
+  position: absolute;
+  background: rgba(28, 25, 36, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--text-3);
+  border-radius: 20px;
+  padding: 5px 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
+
+/* All three sit on the bottom row: Scale left, Page centred, Fit right */
+.hud-scale {
+  bottom: 14px;
+  left: 14px;
+}
+
+.hud-page {
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.hud-zoom {
+  bottom: 14px;
+  right: 14px;
+}
+
+.hud-page button,
+.hud-zoom button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: var(--font-md);
+  font-weight: 600;
+  line-height: 1;
+  transition: color var(--t), background var(--t);
+}
+
+.hud-page button:hover,
+.hud-zoom button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.zoom-label,
+.page-label {
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: center;
+}
+
+/* ── Right panel — properties & markups ────────────────────────────────── */
+.properties-panel {
+  padding: 6px 4px;
+}
+
+.prop-block {
+  padding: 6px 4px;
+}
+
+.prop-block strong {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+  margin-bottom: 4px;
+}
+
+.prop-block p {
+  margin: 0 0 6px;
+  font-size: var(--font-xs);
+  color: var(--text-2);
+}
+
+.prop-block label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+}
+
+/* Standard color palette in the property panel */
+.prop-swatches {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 2px 0 8px;
+}
+
+.prop-swatches .swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.08s ease, border-color 0.08s ease;
+}
+
+.prop-swatches .swatch:hover {
+  transform: scale(1.18);
+  border-color: #fff;
+}
+
+.prop-swatches .swatch.active {
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+/* Totals block sits at the bottom of the properties panel, above Markups */
+.totals-block {
+  border-top: 1px solid var(--border);
+}
+
+.totals-block:empty {
+  display: none;
+}
+
+.totals-block h4 {
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.totals {
+  padding: 0 12px 8px;
+}
+
+.totals p {
+  margin: 5px 0;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+}
+
+/* ── Markups list ──────────────────────────────────────────────────────── */
+.markups-list {
+  border-top: 1px solid var(--border);
+  max-height: 200px;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.markups-list h4 {
+  margin: 0;
+  padding: 8px 10px 4px;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.markups-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 6px;
+}
+
+.markups-list li {
+  padding: 5px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: var(--font-xs);
+  color: var(--text-2);
+  transition: background var(--t), color var(--t);
+}
+
+.markups-list li:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Item name stays readable; the id is dimmed so it doesn't compete */
+.markups-list .mk-name {
+  color: var(--text);
+}
+.markups-list .mk-id {
+  color: #4a4560;
+}
+
+/* ── Status bar ────────────────────────────────────────────────────────── */
+.status-bar {
+  padding: 3px 14px;
+  font-size: var(--font-xs);
+  color: var(--text-3);
+  letter-spacing: 0.01em;
+}
+
+/* ── Utility ───────────────────────────────────────────────────────────── */
+.muted { color: var(--text-2); }
+
+/* ── Context menu ──────────────────────────────────────────────────────── */
+.context-menu {
+  position: fixed;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  min-width: 180px;
+}
+
+.ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+}
+
+.ctx-row select {
+  flex: 1;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--font-xs);
+}
+
+.context-menu button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 7px 14px;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  transition: background var(--t);
+}
+
+.context-menu button:hover {
+  background: var(--surface-3);
+}

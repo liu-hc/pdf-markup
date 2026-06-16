@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Local, machine-specific Claude config
+.claude/settings.local.json
+
+# Test / sample PDFs — not source, and can be very large (e.g. 64MB)
+*.pdf
