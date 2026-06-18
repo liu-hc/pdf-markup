@@ -6,7 +6,7 @@ import {
   updateActiveDoc,
   setCursorPagePoint,
 } from '../state/store';
-import { handlePointerDown, handlePointerMove, handlePointerUp, handleWheel } from '../tools/controller';
+import { handlePointerDown, handlePointerMove, handlePointerUp, handleWheel, handleContextMenu } from '../tools/controller';
 
 /** Pages pre-rendered on each side of the current page. */
 const PREFETCH_RADIUS = 2;
@@ -53,6 +53,7 @@ export class Workspace {
     this.contentEl.addEventListener('pointermove', (e) => handlePointerMove(e, this));
     this.contentEl.addEventListener('pointerup', (e) => handlePointerUp(e, this));
     this.contentEl.addEventListener('wheel', (e) => handleWheel(e, this), { passive: false });
+    this.contentEl.addEventListener('contextmenu', (e) => handleContextMenu(e, this));
 
     this.el.addEventListener('dragover', (e) => {
       e.preventDefault();

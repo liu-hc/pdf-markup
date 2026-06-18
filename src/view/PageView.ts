@@ -133,18 +133,65 @@ export class PageView {
     if (!selected) return;
     const ns = 'http://www.w3.org/2000/svg';
     const handles = getHandlePoints(markup);
+
+    // Rotation (rect / ellipse): rotate the handles about the screen center to
+    // match the drawn shape, then add corner-outside rotate handles.
+    const rotDeg = markup.type === 'rectangle' || markup.type === 'ellipse' ? markup.rotation ?? 0 : 0;
+    const rot = rotDeg * (Math.PI / 180);
+    const cos = Math.cos(rot);
+    const sin = Math.sin(rot);
+    const center = rectEllipseCenter(markup);
+    const scx = center ? center.x * this.scale : 0;
+    const scy = center ? (this.pageHeight - center.y) * this.scale : 0;
+    const toScreen = (h: { x: number; y: number }): { x: number; y: number } => {
+      let x = h.x * this.scale;
+      let y = (this.pageHeight - h.y) * this.scale;
+      if (rot && center) {
+        const dx = x - scx;
+        const dy = y - scy;
+        x = scx + dx * cos - dy * sin;
+        y = scy + dx * sin + dy * cos;
+      }
+      return { x, y };
+    };
+
+    const addHandle = (x: number, y: number, id: string, rotate = false): void => {
+      const el = document.createElementNS(ns, rotate ? 'rect' : 'circle');
+      if (rotate) {
+        el.setAttribute('x', String(x - 4));
+        el.setAttribute('y', String(y - 4));
+        el.setAttribute('width', '8');
+        el.setAttribute('height', '8');
+        el.setAttribute('rx', '4');
+        el.setAttribute('fill', '#9a91b5');
+      } else {
+        el.setAttribute('cx', String(x));
+        el.setAttribute('cy', String(y));
+        el.setAttribute('r', '5');
+        el.setAttribute('fill', '#6b6280');
+      }
+      el.setAttribute('stroke', '#fff');
+      el.setAttribute('stroke-width', '1');
+      el.dataset.handle = id;
+      this.svgLayer.appendChild(el);
+    };
+
     for (const h of handles) {
-      const cx = h.x * this.scale;
-      const cy = (this.pageHeight - h.y) * this.scale;
-      const circle = document.createElementNS(ns, 'circle');
-      circle.setAttribute('cx', String(cx));
-      circle.setAttribute('cy', String(cy));
-      circle.setAttribute('r', '5');
-      circle.setAttribute('fill', '#6b6280');
-      circle.setAttribute('stroke', '#fff');
-      circle.setAttribute('stroke-width', '1');
-      circle.dataset.handle = h.id;
-      this.svgLayer.appendChild(circle);
+      const s = toScreen(h);
+      addHandle(s.x, s.y, h.id);
+    }
+
+    // Rotate handles just outside each corner (rect / ellipse only)
+    if (center) {
+      for (const id of ['nw', 'ne', 'se', 'sw']) {
+        const corner = handles.find((h) => h.id === id);
+        if (!corner) continue;
+        const s = toScreen(corner);
+        const dx = s.x - scx;
+        const dy = s.y - scy;
+        const L = Math.hypot(dx, dy) || 1;
+        addHandle(s.x + (dx / L) * 16, s.y + (dy / L) * 16, 'rotate', true);
+      }
     }
   }
 
@@ -244,6 +291,13 @@ export class PageView {
       y: this.pageHeight - y / this.scale,
     };
   }
+}
+
+/** Page-coord center of a rotatable shape (rectangle / ellipse), else null. */
+function rectEllipseCenter(markup: Markup): Point | null {
+  if (markup.type === 'rectangle') return { x: markup.x + markup.width / 2, y: markup.y + markup.height / 2 };
+  if (markup.type === 'ellipse') return { x: markup.cx, y: markup.cy };
+  return null;
 }
 
 function getHandlePoints(markup: Markup): { id: string; x: number; y: number }[] {

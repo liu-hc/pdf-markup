@@ -47,6 +47,54 @@ export async function loadPdfFromFile(
   return id;
 }
 
+/** Create a blank PDF (N pages of the given paper size + orientation) and
+ *  open it as a new document. Returns the new doc id. */
+export async function createBlankDocument(
+  sizeKey: string,
+  pageCount: number,
+  landscape: boolean,
+): Promise<string> {
+  const { PAGE_SIZES } = await import('../state/types');
+  const base = PAGE_SIZES[sizeKey] ?? PAGE_SIZES['8.5 x 11']!;
+  const w = landscape ? base.h : base.w;
+  const h = landscape ? base.w : base.h;
+  const { PDFDocument } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  const n = Math.max(1, Math.min(500, Math.floor(pageCount) || 1));
+  for (let i = 0; i < n; i++) pdf.addPage([w, h]);
+  const bytes = new Uint8Array(await pdf.save());
+  const file = new File([bytes], 'Untitled.pdf', { type: 'application/pdf' });
+  return loadPdfFromFile(file, null);
+}
+
+/** Wrap a JPEG/PNG in a single-page PDF (page sized to the image) and open it. */
+export async function openImageAsDocument(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const { PDFDocument } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  const isPng = file.type === 'image/png' || /\.png$/i.test(file.name);
+  const img = isPng ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+  const page = pdf.addPage([img.width, img.height]);
+  page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+  const out = new Uint8Array(await pdf.save());
+  const name = file.name.replace(/\.(png|jpe?g)$/i, '.pdf');
+  const pdfFile = new File([out], name, { type: 'application/pdf' });
+  return loadPdfFromFile(pdfFile, null);
+}
+
+/** Open a dropped/selected file as a new document, if it's a supported type. */
+export async function openDroppedFile(file: File): Promise<boolean> {
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    await loadPdfFromFile(file, null);
+    return true;
+  }
+  if (file.type === 'image/png' || file.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(file.name)) {
+    await openImageAsDocument(file);
+    return true;
+  }
+  return false;
+}
+
 async function loadPageInfos(pdfDoc: PDFDocumentProxy): Promise<PageInfo[]> {
   const pages: PageInfo[] = [];
   for (let i = 1; i <= pdfDoc.numPages; i++) {

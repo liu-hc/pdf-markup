@@ -20,6 +20,7 @@ import type {
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
 import { findMarkupAtPoint, cloneMarkup } from '../markups/hitTest';
+import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
 import { ensureTextBoxes, getTextBoxesSync, type TextBox } from '../pdf/textLayer';
 import type { Workspace } from '../view/Workspace';
@@ -78,6 +79,8 @@ let draw: DrawState = { start: null, points: [], pageIndex: 0, pv: null };
 let edit: EditState | null = null;
 let calloutDraw: CalloutDraw | null = null;
 let dimDraw: DimDraw | null = null;
+/** In-progress 2-click calibration (point 1 → point 2 → prompt for length). */
+let calibDraw: DimDraw | null = null;
 
 /** In-progress highlighter gesture — free-hand ink swipe over an area, or a
  *  text selection (drag from a glyph) that snaps to text-line rectangles. */
@@ -134,9 +137,13 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
   const tool = getState().activeTool;
   const p = pv.screenToPage(e.clientX, e.clientY);
 
-  // Middle-button drag pans on EVERY tool; Alt+Left additionally pans on
-  // the Navigate tools (flip/zoom), where left-drag has no other meaning.
-  if (e.button === 1 || (e.button === 0 && e.altKey && (tool === 'flip' || tool === 'zoom'))) {
+  // Middle-button drag pans on EVERY tool. Left-button pans with the Pan tool,
+  // or Alt+Left on the Navigate tools (flip/zoom) where it has no other meaning.
+  if (
+    e.button === 1 ||
+    (e.button === 0 && tool === 'pan') ||
+    (e.button === 0 && e.altKey && (tool === 'flip' || tool === 'zoom'))
+  ) {
     panning = true;
     panStart = {
       x: e.clientX,
@@ -144,11 +151,12 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
       scrollLeft: ws.scrollEl.scrollLeft,
       scrollTop: ws.scrollEl.scrollTop,
     };
+    if (tool === 'pan') ws.contentEl.style.cursor = 'grabbing';
     e.preventDefault();
     return;
   }
 
-  if (tool === 'flip' || tool === 'zoom') return;
+  if (tool === 'flip' || tool === 'zoom' || tool === 'pan') return;
 
   // An inline editor is open: this click is outside it (clicks inside are
   // stopped by the editor). Let the editor's blur commit the text and return
@@ -227,9 +235,9 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  // Callout and Dimension are discrete multi-click tools — clicks are
-  // registered on pointerup.
-  if (tool === 'callout' || tool === 'dimension') {
+  // Callout, Dimension and Calibrate are discrete multi-click tools — clicks
+  // are registered on pointerup.
+  if (tool === 'callout' || tool === 'dimension' || tool === 'calibrate') {
     e.preventDefault();
     return;
   }
@@ -280,7 +288,9 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     const updated =
       edit.mode === 'move'
         ? translateMarkup(edit.original, dx, dy)
-        : applyHandleDrag(edit.original, edit.handleId, ep, e.shiftKey);
+        : edit.handleId === 'rotate'
+          ? applyRotate(edit.original, edit.start, ep, e.shiftKey)
+          : applyHandleDrag(edit.original, edit.handleId, ep, e.shiftKey);
     updateMarkup(edit.markupId, () => updated);
     return;
   }
@@ -303,7 +313,12 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     }
     return;
   }
-  // Leaving the highlighter: drop the custom cursor
+  // Pan tool: open hand on hover, closed hand while dragging
+  if (tool === 'pan') {
+    ws.contentEl.style.cursor = panning ? 'grabbing' : 'grab';
+    return;
+  }
+  // Leaving the highlighter / pan: drop the custom cursor
   if (ws.contentEl.style.cursor) ws.contentEl.style.cursor = '';
 
   // Callout: live leader/box preview between clicks
@@ -315,6 +330,14 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
   // Dimension: live preview (segment, then offset dimension line)
   if (tool === 'dimension' && dimDraw) {
     renderDimPreview(dimDraw.pv.screenToPage(e.clientX, e.clientY), e.shiftKey);
+    return;
+  }
+
+  // Calibrate: rubber-band line from the first click to the cursor
+  if (tool === 'calibrate' && calibDraw) {
+    const c = calibDraw.pv.screenToPage(e.clientX, e.clientY);
+    const end = e.shiftKey ? orthoSnap(calibDraw.p1, c) : c;
+    calibDraw.pv.drawPreview([calibDraw.p1, end], false, previewColor(calibDraw.pv.pageIndex));
     return;
   }
 
@@ -367,6 +390,8 @@ function renderCalloutPreview(cursor: Point): void {
 export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   if (panning) {
     panning = false;
+    // Back to the open hand if we're still on the Pan tool, else clear it
+    ws.contentEl.style.cursor = getState().activeTool === 'pan' ? 'grab' : '';
     if (e.button === 1) {
       const now = Date.now();
       if (now - lastClick < 300) ws.fit100();
@@ -405,6 +430,13 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   if (tool === 'dimension') {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? dimDraw?.pv ?? null;
     if (pv) handleDimClick(pv, pv.screenToPage(e.clientX, e.clientY), e, ws);
+    return;
+  }
+
+  // Calibrate: two clicks define the measured span, then prompt for its length
+  if (tool === 'calibrate') {
+    const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? calibDraw?.pv ?? null;
+    if (pv) handleCalibrateClick(pv, pv.screenToPage(e.clientX, e.clientY), e);
     return;
   }
 
@@ -647,6 +679,53 @@ export function handleWheel(e: WheelEvent, ws: Workspace): void {
   }
 }
 
+/** Right-click a markup → a draw-order context menu (front/back, delete). */
+export function handleContextMenu(e: MouseEvent, ws: Workspace): void {
+  const doc = getActiveDoc();
+  const pv = ws.getPageViewAt(e.clientX, e.clientY);
+  if (!doc || !pv) return;
+  const p = pv.screenToPage(e.clientX, e.clientY);
+  const hit = findMarkupAtPoint(doc.markups, pv.pageIndex, p);
+  if (!hit) return; // not over a markup → leave the native menu
+  e.preventDefault();
+  selectMarkups([hit.id]);
+  ws.redrawAllMarkups();
+
+  document.querySelector('.context-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.style.left = `${e.clientX}px`;
+  menu.style.top = `${e.clientY}px`;
+  const apply = (next: Markup[], label: string): void => {
+    applyMarkupChange(label, next);
+    ws.redrawAllMarkups();
+  };
+  const actions: ([string, () => void] | 'sep')[] = [
+    ['Bring to Front', () => apply(moveToFront(docMarkups(), hit.id), 'Bring to front')],
+    ['Bring Forward', () => apply(nudgeOrder(docMarkups(), hit.id, 1), 'Bring forward')],
+    ['Send Backward', () => apply(nudgeOrder(docMarkups(), hit.id, -1), 'Send backward')],
+    ['Send to Back', () => apply(moveToBack(docMarkups(), hit.id), 'Send to back')],
+    'sep',
+    ['Delete', () => { apply(docMarkups().filter((m) => m.id !== hit.id), 'Delete'); selectMarkups([]); }],
+  ];
+  const close = (): void => menu.remove();
+  for (const a of actions) {
+    if (a === 'sep') {
+      const s = document.createElement('div');
+      s.className = 'ctx-sep';
+      menu.appendChild(s);
+      continue;
+    }
+    const [label, fn] = a;
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.addEventListener('click', () => { fn(); close(); });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('pointerdown', close, { once: true }), 0);
+}
+
 function isPolyTool(tool: ToolId): boolean {
   return ['polygon', 'polyline', 'measureAngle'].includes(tool);
 }
@@ -763,28 +842,6 @@ function commitDragTool(tool: ToolId, a: Point, b: Point, e: PointerEvent, ws: W
         arrowStart: 'none',
       };
       break;
-    }
-    case 'calibrate': {
-      // Shift = lock to horizontal/vertical (architectural dimensioning)
-      if (e.shiftKey) b = orthoSnap(a, b);
-      const real = prompt('Enter real-world length (e.g. 10\'-0")');
-      if (real) {
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        const inches = parseRealLength(real);
-        if (inches && len > 0) {
-          updateActiveDoc((d) => {
-            const defaults = [...d.pageDefaults];
-            defaults[pageIndex] = {
-              ...defaults[pageIndex]!,
-              scaleLabel: 'Custom',
-              scaleFactor: inches / (len / 72),
-            };
-            return { ...d, pageDefaults: defaults, dirty: true };
-          });
-        }
-      }
-      returnToNavTool();
-      return;
     }
     case 'snip': {
       void captureSnip(a, b, pageIndex, ws);
@@ -1004,6 +1061,47 @@ function renderDimPreview(cursor: Point, shift: boolean): void {
   pv.drawPreview([p1, g.d1, g.d2, p2], false, color);
 }
 
+/** Calibrate: click two points across a known distance, then type the
+ *  real-world length; this sets the page scale factor. */
+function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
+  const color = previewColor(pv.pageIndex);
+  if (!calibDraw) {
+    // Click 1: first endpoint
+    calibDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null };
+    pv.drawPreview([calibDraw.p1, calibDraw.p1], false, color);
+    return;
+  }
+  // Click 2: second endpoint → prompt for the real length and set the scale
+  const p1 = calibDraw.p1;
+  const p2 = e.shiftKey ? orthoSnap(p1, p) : { ...p };
+  const pageIndex = calibDraw.pageIndex;
+  pv.drawPreview([p1, p2], false, color);
+  const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  if (len < 1) {
+    // Too short to be meaningful — restart from this click
+    calibDraw = { pv, pageIndex, p1: { ...p }, p2: null };
+    return;
+  }
+  const real = prompt('Calibrate scale — enter the real-world length of the drawn line\n(e.g. 10\'-0", 10\', or 120 for inches)');
+  calibDraw = null;
+  pv.clearSvg();
+  if (real) {
+    const inches = parseRealLength(real);
+    if (inches && inches > 0) {
+      updateActiveDoc((d) => {
+        const defaults = [...d.pageDefaults];
+        defaults[pageIndex] = {
+          ...defaults[pageIndex]!,
+          scaleLabel: 'Custom',
+          scaleFactor: inches / (len / 72),
+        };
+        return { ...d, pageDefaults: defaults, dirty: true };
+      });
+    }
+  }
+  returnToNavTool();
+}
+
 // ── Text box (2-click box + in-place typing, like the callout) ───────────────
 
 function openTextBoxEditor(
@@ -1123,6 +1221,36 @@ function orthoSnap(a: Point, b: Point): Point {
   return Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
 }
 
+/** Page-coord center of a rotatable shape (rectangle / ellipse). */
+function shapeCenter(m: Markup): Point {
+  if (m.type === 'ellipse') return { x: m.cx, y: m.cy };
+  if (m.type === 'rectangle') return { x: m.x + m.width / 2, y: m.y + m.height / 2 };
+  return { x: 0, y: 0 };
+}
+
+/** Rotate a page point about `c` by `deg` (screen-clockwise convention). */
+function rotatePagePoint(p: Point, c: Point, deg: number): Point {
+  const t = (deg * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  return { x: c.x + dx * cos + dy * sin, y: c.y - dx * sin + dy * cos };
+}
+
+/** Rotate handle drag: spin the shape so the grabbed corner follows the cursor. */
+function applyRotate(m: Markup, start: Point, cur: Point, shift: boolean): Markup {
+  if (m.type !== 'rectangle' && m.type !== 'ellipse') return m;
+  const c = shapeCenter(m);
+  const a0 = Math.atan2(start.y - c.y, start.x - c.x);
+  const a1 = Math.atan2(cur.y - c.y, cur.x - c.x);
+  const deltaDeg = ((a1 - a0) * 180) / Math.PI; // page-CCW change
+  let rot = (m.rotation ?? 0) - deltaDeg; // stored rotation is screen-clockwise
+  if (shift) rot = Math.round(rot / 15) * 15; // Shift snaps to 15°
+  rot = ((rot % 360) + 360) % 360;
+  return { ...m, rotation: rot };
+}
+
 function translateMarkup(m: Markup, dx: number, dy: number): Markup {
   switch (m.type) {
     case 'rectangle':
@@ -1185,18 +1313,26 @@ function resizeRectByHandle(
 
 function applyHandleDrag(m: Markup, handle: string, p: Point, shift: boolean): Markup {
   switch (m.type) {
-    case 'rectangle':
+    case 'rectangle': {
+      // For a rotated rect, resize in its local (unrotated) frame
+      const rot = m.rotation ?? 0;
+      const lp = rot ? rotatePagePoint(p, shapeCenter(m), -rot) : p;
+      return { ...m, ...resizeRectByHandle(m, handle, lp) };
+    }
     case 'highlighter':
     case 'snipImage':
     case 'text':
       return { ...m, ...resizeRectByHandle(m, handle, p) };
     case 'ellipse': {
       // Resize the bounding box (corner = both axes, edge = one axis), then
-      // derive the new centre + radii. The opposite corner/edge stays anchored.
+      // derive the new centre + radii. For a rotated ellipse, resize in its
+      // local frame so the handles track the cursor.
+      const rot = m.rotation ?? 0;
+      const lp = rot ? rotatePagePoint(p, shapeCenter(m), -rot) : p;
       const r = resizeRectByHandle(
         { x: m.cx - m.rx, y: m.cy - m.ry, width: 2 * m.rx, height: 2 * m.ry },
         handle,
-        p,
+        lp,
       );
       return {
         ...m,
@@ -1612,6 +1748,11 @@ export function setupKeyboardShortcuts(): void {
         dimDraw = null;
         return;
       }
+      if (calibDraw) {
+        calibDraw.pv.clearSvg();
+        calibDraw = null;
+        return;
+      }
       if (draw.pv) {
         draw.pv.clearSvg();
         draw = { start: null, points: [], pageIndex: 0, pv: null };
@@ -1659,6 +1800,7 @@ export function setupKeyboardShortcuts(): void {
 
     const toolKeys: Record<string, ToolId> = {
       f: 'flip',
+      h: 'pan',
       z: 'zoom',
       r: 'rectangle',
       o: 'ellipse',

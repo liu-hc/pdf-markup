@@ -2,6 +2,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 export type ToolId =
   | 'flip'
+  | 'pan'
   | 'zoom'
   | 'select'
   | 'rectangle'
@@ -87,6 +88,8 @@ export interface RectMarkup extends MarkupBase {
   y: number;
   width: number;
   height: number;
+  /** Rotation in degrees (clockwise on screen) about the shape's center. */
+  rotation?: number;
 }
 
 export interface EllipseMarkup extends MarkupBase {
@@ -95,6 +98,8 @@ export interface EllipseMarkup extends MarkupBase {
   cy: number;
   rx: number;
   ry: number;
+  /** Rotation in degrees (clockwise on screen) about the center. */
+  rotation?: number;
 }
 
 export interface PolyMarkup extends MarkupBase {
@@ -352,4 +357,12 @@ export const SWATCH_COLORS = [
   '#0070c0',
   '#002060',
   '#7030a0',
+  // Grayscale ramp, white → black
+  '#ffffff',
+  '#d9d9d9',
+  '#bfbfbf',
+  '#808080',
+  '#595959',
+  '#404040',
+  '#000000',
 ];

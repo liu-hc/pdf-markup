@@ -73,10 +73,16 @@ export function drawMarkupOnCanvas(
 
   switch (markup.type) {
     case 'rectangle': {
-      const x = markup.x * scale;
-      const y = (pageHeight - markup.y - markup.height) * scale;
-      ctx.strokeRect(x, y, markup.width * scale, markup.height * scale);
-      if (style.fill) ctx.fillRect(x, y, markup.width * scale, markup.height * scale);
+      const w = markup.width * scale;
+      const h = markup.height * scale;
+      const rot = (markup.rotation ?? 0) * (Math.PI / 180);
+      ctx.save();
+      // Rotate about the rectangle's center
+      ctx.translate((markup.x + markup.width / 2) * scale, (pageHeight - markup.y - markup.height / 2) * scale);
+      if (rot) ctx.rotate(rot);
+      if (style.fill) ctx.fillRect(-w / 2, -h / 2, w, h);
+      ctx.strokeRect(-w / 2, -h / 2, w, h);
+      ctx.restore();
       break;
     }
     case 'highlighter': {
@@ -119,7 +125,7 @@ export function drawMarkupOnCanvas(
         (pageHeight - markup.cy) * scale,
         markup.rx * scale,
         markup.ry * scale,
-        0,
+        (markup.rotation ?? 0) * (Math.PI / 180),
         0,
         Math.PI * 2,
       );
@@ -131,13 +137,11 @@ export function drawMarkupOnCanvas(
       const sFull = toScreen({ x: markup.x1, y: markup.y1 });
       const eFull = toScreen({ x: markup.x2, y: markup.y2 });
       const lineArrow = style.lineWeight * scale * (markup.arrowSize ?? 1);
-      const startHead = (markup.arrowStart ?? 'none') !== 'none';
-      const endHead = (markup.arrowEnd ?? 'none') !== 'none';
-      const depth = arrowDepth(lineArrow);
-      // Pull the body back to the arrowhead base so the thick stroke doesn't
-      // blunt the sharp tip
-      const s = startHead ? shortenToward(sFull, eFull, depth) : sFull;
-      const e = endHead ? shortenToward(eFull, sFull, depth) : eFull;
+      const strokeW = style.lineWeight * scale;
+      // Pull the body back just enough to meet the arrowhead cleanly (filled →
+      // base, open → tuck the butt behind the tip)
+      const s = shortenToward(sFull, eFull, arrowBodyInset(markup.arrowStart ?? 'none', lineArrow, strokeW));
+      const e = shortenToward(eFull, sFull, arrowBodyInset(markup.arrowEnd ?? 'none', lineArrow, strokeW));
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(e.x, e.y);
@@ -221,6 +225,10 @@ export function drawMarkupOnCanvas(
       } else {
         k = py > 0 || (py === 0 && px > 0) ? -loff : loff;
       }
+      // Text always runs parallel to the dimension line (kept upright)
+      let labelAngle = Math.atan2(uy, ux);
+      if (labelAngle > Math.PI / 2) labelAngle -= Math.PI;
+      else if (labelAngle < -Math.PI / 2) labelAngle += Math.PI;
       drawCenteredLabel(
         ctx,
         (d1s.x + d2s.x) / 2 + px * k,
@@ -230,6 +238,7 @@ export function drawMarkupOnCanvas(
         scale,
         style.fontSize,
         style.fontFamily,
+        labelAngle,
       );
       break;
     }
@@ -255,11 +264,13 @@ export function drawMarkupOnCanvas(
       const screen = markup.points.map(toScreen);
       const sz = style.lineWeight * scale * (markup.arrowSize ?? 1);
       const last = screen.length - 1;
-      // Pull the first/last path point back to the arrowhead base (polyline only)
+      // Pull the first/last path point back to meet the arrowhead (polyline only)
       if (markup.type === 'polyline') {
-        const depth = arrowDepth(sz);
-        if ((markup.arrowStart ?? 'none') !== 'none') screen[0] = shortenToward(screen[0]!, screen[1]!, depth);
-        if ((markup.arrowEnd ?? 'none') !== 'none') screen[last] = shortenToward(screen[last]!, screen[last - 1]!, depth);
+        const strokeW = style.lineWeight * scale;
+        const insS = arrowBodyInset(markup.arrowStart ?? 'none', sz, strokeW);
+        const insE = arrowBodyInset(markup.arrowEnd ?? 'none', sz, strokeW);
+        if (insS) screen[0] = shortenToward(screen[0]!, screen[1]!, insS);
+        if (insE) screen[last] = shortenToward(screen[last]!, screen[last - 1]!, insE);
       }
       ctx.beginPath();
       ctx.moveTo(screen[0]!.x, screen[0]!.y);
@@ -338,8 +349,8 @@ export function drawMarkupOnCanvas(
       // Callout arrows use a 2.5× larger base than lines, scaled by the multiplier
       const calloutArrow = style.lineWeight * scale * 2.5 * (markup.arrowSize ?? 1);
       const head = markup.arrowEnd ?? 'filled';
-      // Pull the leader back to the arrowhead base so the tip stays sharp
-      const anchorEnd = head !== 'none' ? shortenToward(anchor, kinkS, arrowDepth(calloutArrow)) : anchor;
+      // Pull the leader back to meet the arrowhead (filled → base, open → tuck)
+      const anchorEnd = shortenToward(anchor, kinkS, arrowBodyInset(head, calloutArrow, style.lineWeight * scale));
       ctx.beginPath();
       ctx.moveTo(exitS.x, exitS.y);
       ctx.lineTo(kinkS.x, kinkS.y);
@@ -444,6 +455,15 @@ function arrowDepth(size: number): number {
   return size * 3 * Math.cos(ARROW_SPREAD);
 }
 
+/** How far to pull the body line back from the true tip for a given head.
+ *  Filled → to the triangle base. Open (V) has no base, so only tuck the butt
+ *  cap behind the tip (half the stroke width) so the line still meets the V
+ *  without the squared end poking past it. */
+function arrowBodyInset(head: ArrowHead, size: number, strokeW: number): number {
+  if (head === 'none') return 0;
+  return head === 'filled' ? arrowDepth(size) : strokeW * 0.6;
+}
+
 /** Move `p` toward `toward` by `dist` (clamped so it never overshoots). */
 function shortenToward(p: Point, toward: Point, dist: number): Point {
   const dx = toward.x - p.x;
@@ -507,12 +527,20 @@ function drawCenteredLabel(
   scale: number,
   fontSize = 11,
   fontFamily = 'Arial',
+  angle = 0,
 ): void {
   ctx.save();
   ctx.font = canvasFont(fontSize * scale, fontFamily);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.setLineDash([]);
+  // Rotate the label (e.g. parallel to a dimension line) about its center
+  if (angle) {
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    x = 0;
+    y = 0;
+  }
   ctx.lineWidth = 3 * scale;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
   ctx.strokeText(text, x, y);

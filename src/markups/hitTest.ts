@@ -3,15 +3,33 @@ import { dist, pointInRect, dimensionGeometry, calloutLeader } from '../util/geo
 
 const HIT_TOLERANCE = 8;
 
+/** Inverse of a shape's screen-clockwise rotation, mapping a page point into
+ *  the shape's local (axis-aligned) frame. */
+function unrotate(p: Point, c: Point, deg: number): Point {
+  const t = (-deg * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  return { x: c.x + dx * cos + dy * sin, y: c.y - dx * sin + dy * cos };
+}
+
 export function hitTestMarkup(markup: Markup, p: Point, tolerance = HIT_TOLERANCE): boolean {
   switch (markup.type) {
-    case 'rectangle':
+    case 'rectangle': {
+      // Un-rotate the click into the rect's local frame
+      const rot = markup.rotation ?? 0;
+      const lp = rot ? unrotate(p, { x: markup.x + markup.width / 2, y: markup.y + markup.height / 2 }, rot) : p;
+      return pointInRect(lp.x, lp.y, markup.x, markup.y, markup.width, markup.height);
+    }
     case 'highlighter':
     case 'snipImage':
       return pointInRect(p.x, p.y, markup.x, markup.y, markup.width, markup.height);
     case 'ellipse': {
-      const dx = (p.x - markup.cx) / markup.rx;
-      const dy = (p.y - markup.cy) / markup.ry;
+      const rot = markup.rotation ?? 0;
+      const lp = rot ? unrotate(p, { x: markup.cx, y: markup.cy }, rot) : p;
+      const dx = (lp.x - markup.cx) / markup.rx;
+      const dy = (lp.y - markup.cy) / markup.ry;
       return dx * dx + dy * dy <= 1;
     }
     case 'line':
