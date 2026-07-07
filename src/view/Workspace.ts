@@ -471,8 +471,18 @@ export class Workspace {
     const page = doc.pages[doc.currentPage];
     if (!page) return;
     const pad = 48;
-    const scaleW = (this.scrollEl.clientWidth - pad) / page.width;
-    const scaleH = (this.scrollEl.clientHeight - pad) / page.height;
+    // The glass chrome (ribbon, side panels, bottom HUD) floats OVER the
+    // canvas — fit the page into the visible region between the overlays.
+    const st = getState();
+    const panelW =
+      (st.leftPanelVisible ? st.leftPanelWidth + 16 : 0) +
+      (st.rightPanelVisible ? st.rightPanelWidth + 16 : 0);
+    const ribbonH = (document.querySelector('.ribbon') as HTMLElement | null)?.offsetHeight ?? 0;
+    const hudH = 44;
+    const availW = Math.max(120, this.scrollEl.clientWidth - panelW - pad);
+    const availH = Math.max(120, this.scrollEl.clientHeight - ribbonH - 16 - hudH - pad);
+    const scaleW = availW / page.width;
+    const scaleH = availH / page.height;
     this._centerNext = true;
     this.setZoom(Math.min(scaleW, scaleH));
   }

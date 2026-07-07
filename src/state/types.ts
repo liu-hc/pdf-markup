@@ -289,6 +289,8 @@ export const ARROW_SIZE_OPTIONS: { value: number; label: string }[] = [
   { value: 0.5, label: '50%' },
   { value: 1, label: '100%' },
   { value: 2, label: '200%' },
+  { value: 4, label: '400%' },
+  { value: 8, label: '800%' },
 ];
 
 /** Fonts offered in the property panel. Arial is always the default. */

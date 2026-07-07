@@ -311,6 +311,9 @@ export function drawMarkupOnCanvas(
         ctx.fillStyle = style.fill;
         ctx.fillRect(x, y, markup.width * scale, markup.height * scale);
       }
+      // Box border — drawn with the line color/weight/style (independent of
+      // the text color, which only paints the glyphs)
+      ctx.strokeRect(x, y, markup.width * scale, markup.height * scale);
       ctx.fillStyle = style.textColor;
       drawMultilineText(
         ctx,
@@ -445,14 +448,18 @@ function applyLineStyle(ctx: CanvasRenderingContext2D, style: LineStyle, width: 
   }
 }
 
-/** Half-angle of the arrowhead — ~20° gives a clean, sharp triangular arrow. */
-const ARROW_SPREAD = 0.35;
+/** Half-angle of the arrowhead — atan(0.5) so the base width equals the axial
+ *  depth (a 1:1 width-to-length triangle). */
+const ARROW_SPREAD = Math.atan(0.5);
+
+/** Barb length (tip → barb end, along the hypotenuse) for a head of `size`. */
+const ARROW_LEN = 6;
 
 /** Axial depth (tip → base) of an arrowhead of the given `size`. The body line
  *  is shortened by this amount so the thick stroke doesn't poke through and
  *  blunt the sharp triangular tip. */
 function arrowDepth(size: number): number {
-  return size * 3 * Math.cos(ARROW_SPREAD);
+  return size * ARROW_LEN * Math.cos(ARROW_SPREAD);
 }
 
 /** How far to pull the body line back from the true tip for a given head.
@@ -482,7 +489,7 @@ function drawArrow(
 ): void {
   if (head === 'none') return;
   const angle = Math.atan2(from.y - to.y, from.x - to.x);
-  const len = size * 3;
+  const len = size * ARROW_LEN;
   const spread = ARROW_SPREAD;
   const bx1 = from.x - len * Math.cos(angle - spread);
   const by1 = from.y - len * Math.sin(angle - spread);

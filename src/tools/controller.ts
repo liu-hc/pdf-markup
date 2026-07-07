@@ -482,7 +482,7 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
         if (prevPv && r.width > 2 && r.height > 2) openTextBoxEditor(prevPv, pageIndex, r);
         else returnToNavTool();
       } else {
-        commitTwoClick(tool, a, b, e);
+        commitTwoClick(tool, a, b, e, pageIndex);
         ws.redrawAllMarkups();
       }
     }
@@ -897,9 +897,9 @@ function commitPolyTool(tool: ToolId, rawPoints: Point[], shiftKey: boolean): vo
   }
 }
 
-/** Commit a two-click rectangle / ellipse (a, b = opposite corners). */
-function commitTwoClick(tool: ToolId, a: Point, b: Point, e: PointerEvent): void {
-  const pageIndex = draw.pageIndex;
+/** Commit a two-click rectangle / ellipse (a, b = opposite corners).
+ *  `pageIndex` must be passed in: `draw` is already reset by the caller. */
+function commitTwoClick(tool: ToolId, a: Point, b: Point, e: PointerEvent, pageIndex: number): void {
   let markup: Markup | null = null;
   if (tool === 'rectangle') {
     const r = normalizeRect(a.x, a.y, b.x - a.x, b.y - a.y);

@@ -9,7 +9,11 @@ draw and measure on them, and saves the markups back into the PDF.
   (legacy build) for rendering, [pdf-lib](https://pdf-lib.js.org/) for writing,
   the File System Access API for save, and a small custom reactive store.
 - **Target:** Desktop Chrome / Edge.
-- **Theme:** A muted-aubergine dark UI (deep purple canvas, dusty-purple accents).
+- **Theme:** Aurora liquid glass — the toolbar, side panels and viewer
+  controls are translucent frosted-glass overlays (backdrop blur + edge rim
+  lights) floating over a full-bleed light drafting canvas, so the PDF shows
+  through beneath them. Deep indigo-navy window chrome, violet glass document
+  rail, light glass inspector panel, monospaced UI type, vivid indigo accents.
 
 ---
 
@@ -29,7 +33,9 @@ Top to bottom:
 5. **Main area** — left panel (Bookmarks / Thumbnails), center viewer(s), right
    panel (Properties + Totals + Markups list). Panels are resizable and
    collapsible; the collapse arrows tuck inside the panel when expanded.
-6. **Status bar** — current tool, calibration, cursor position, markup count,
+6. **Canvas HUD** — glass pills centered at the very bottom of the canvas:
+   Scale chip, page ‹ n / m ›, and Fit / − zoom % +.
+7. **Status bar** — current tool, calibration, cursor position, markup count,
    sheet size.
 
 The viewer supports **single-page** and **continuous** modes, and a
@@ -176,7 +182,7 @@ src/
     hitTest.ts             selection hit-testing
   ui/
     AppShell.ts            menus, ribbon, panels, dialogs, properties, thumbnails
-  styles/main.css          the full aubergine design system
+  styles/main.css          the full design system (indigo chrome / light canvas)
 ```
 
 ---

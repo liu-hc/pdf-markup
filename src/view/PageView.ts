@@ -163,12 +163,12 @@ export class PageView {
         el.setAttribute('width', '8');
         el.setAttribute('height', '8');
         el.setAttribute('rx', '4');
-        el.setAttribute('fill', '#9a91b5');
+        el.setAttribute('fill', '#7a97e8');
       } else {
         el.setAttribute('cx', String(x));
         el.setAttribute('cy', String(y));
         el.setAttribute('r', '5');
-        el.setAttribute('fill', '#6b6280');
+        el.setAttribute('fill', '#2f6fe0');
       }
       el.setAttribute('stroke', '#fff');
       el.setAttribute('stroke-width', '1');

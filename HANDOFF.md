@@ -5,197 +5,99 @@ A pure-browser PDF viewer + markup tool for architectural CAD PDFs ("Bluebeam-li
 Single user, runs locally, no server.
 
 - **Location:** `BB PDF/markup-studio/`
-- **Spec:** `../Design.rtf` (kept up to date with finalized decisions)
-- **Build plan:** `.cursor/plans/markup_studio_build_09fecdf3.plan.md` (do not edit)
+- **Spec:** `Design.md` (kept up to date with finalized decisions)
 
 ## Stack
-Vanilla TypeScript + Vite, `pdfjs-dist` (v6), `pdf-lib`, File System Access API, custom reactive store.
+Vanilla TypeScript + Vite, `pdfjs-dist` (v6, **legacy build** — the modern build
+assumes JS features Chrome doesn't ship yet), `pdf-lib`, File System Access API,
+custom reactive store.
 
 ## How to run
 ```bash
 npm install
 npm run dev
 ```
-Open **http://localhost:5174/** in Chrome/Edge.
-
-> Notes:
-> - Use the dev server URL, not `file://` on `index.html`.
-> - Port 5173 may serve stale code; prefer 5174 (`npm run dev -- --force` if needed).
-> - `npm run build` currently passes.
+Open the printed URL in Chrome/Edge (use the dev server URL, not `file://`).
+`npm run build` passes (tsc + vite).
 
 ## Source layout
 - `src/state/` — store, types, undo
-- `src/pdf/` — loader, render, export, importMarkups
-- `src/view/` — PageView (3 layers: PDF canvas, markup canvas, SVG), Workspace (virtualization)
+- `src/pdf/` — loader, render, export, importMarkups, textLayer
+- `src/view/` — PageView (PDF canvas + overlay canvas + markup canvas + SVG handles), Workspace (virtualization, zoom, split pane)
 - `src/tools/controller.ts` — navigation, shapes, annotations, measure, edit shortcuts
-- `src/ui/AppShell.ts` — menus, ribbon, panels, HUDs, split view, overlay bar, doc tabs
-- `src/markups/` — draw, hitTest
-- `src/styles/main.css` — dark theme
+- `src/ui/AppShell.ts` — menus, ribbon, panels, dialogs, properties, thumbnails, status bar
+- `src/markups/` — draw, hitTest, order
+- `src/styles/main.css` — the design system (see Theme below)
 
-## Milestones (all implemented at a functional level)
-- **M1** Foundation + viewer (open, layout shell, virtualization, continuous/single, rotation, Flip/Zoom nav, thumbnails/bookmarks, HUDs, status bar)
-- **M2** Markup tools + editing (shapes, annotations, selection/handles, page defaults, Properties panel, Markups list, Edit menu)
-- **M3** Measure + scale (calibration, imperial scales, dimension/polyline/area/angle, ft-in formatting, Totals)
-- **M4** Save / Flatten / Reopen (pdf-lib export + metadata dict, Save/Save As, reopen-parse, Flatten, page insert/rotate)
-- **M5** Advanced (multi-doc tabs, split view, overlay bar, raster snip v1, new blank page sizes)
+## Status (2026-07-05)
+All milestones (M1–M5, see `Design.md`) are implemented and working: viewer,
+markup tools + editing, measure + scale, save/flatten/reopen, multi-doc tabs,
+split view, overlay, snip. Smoke-tested against a 272-page 64MB CAD PDF
+(`Test-PDF.pdf`, untracked): rendering, thumbnails, draw/select/move,
+properties, undo/redo, text/callout/dimension, split view and overlay all pass
+with a clean console.
 
----
+### Theme (redesigned 2026-07-05, "Aurora liquid glass")
+Apple-style liquid glass over a full-bleed light drafting canvas. Key
+structure:
 
-## RESOLVED (2026-06-11, part 3): callout elbow + offset dimensions
+- **The canvas fills the whole `.main-area`;** the ribbon, both side panels
+  and the bottom HUD are absolutely-positioned frosted-glass overlays
+  (`backdrop-filter` + rim-light `--glass-edge` shadows) — the PDF scrolls
+  beneath them and shows through, blurred. Glass tokens live in `:root`
+  (`--glass-*`); the 8px chrome margin is `GLASS_GAP` in `AppShell.ts` and
+  must stay in sync with the CSS insets.
+- Panels hang below the ribbon: their `top` is set in `renderChrome()` from
+  the ribbon's measured height (re-run on mount + window resize).
+- `Workspace.fitPage()` fits the page into the *visible* region between the
+  overlays (subtracts panel widths / ribbon / HUD).
+- The viewer controls (Scale chip, page ‹ n / m ›, Fit − % +) are glass pills
+  centered at the very bottom of the canvas (`.canvas-hud`).
+- Overlay + Snip sit in their own **Edit** ribbon group; filename chip is
+  centered in the menubar.
+- Properties panel: navy header band (markup type + page, icon reused from
+  the ribbon `TOOL_ICONS` via `PROP_ICON`), then Line / Infill / Text color
+  wells — each an independent per-markup override of the page defaults.
+- Markups list rows: color dot · type · abbreviated info (`ab…yz` of the
+  markup's text content, full text in the tooltip). Dragging a row shows a
+  glowing insertion line between rows.
+- Selection handles on canvas are blue (`#2f6fe0` / `#7a97e8` rotate handles)
+  — set in `src/view/PageView.ts`.
+- Arrowheads are 1:1 (base width = length) triangles, sized by
+  `ARROW_LEN`/`ARROW_SPREAD` in `src/markups/draw.ts`; size options go up to
+  800% of the line weight.
 
-- **Callout leader has an elbow**: horizontal run exits the text box at
-  mid-height (left or right side), bends at a kink, then goes diagonally to
-  the arrow. `CalloutMarkup.kinkX` stores the elbow X (undefined = auto on
-  the anchor side); a "kink" selection handle drags it left/right. Shared
-  geometry in `util/geometry.ts: calloutLeader()` keeps draw / hitTest /
-  handles consistent.
-- **Dimensions are offset-style**: measured points (x1,y1)/(x2,y2) stay on
-  the object; `offset` displaces the dimension line perpendicular; extension
-  lines stretch to bridge. Handles: `start`/`end` micro-adjust the measured
-  points, `offset` (mid-span) pulls the dimension line away. Geometry in
-  `util/geometry.ts: dimensionGeometry()`.
-- **Properties panel rebuilt and actually wired** (inputs previously had no
-  event handlers): stroke, weight, line style, opacity for any markup; for
-  dimensions also End style (slash tick / arrow) and "Round up to"
-  (Exact, 1/4", 1", 6", 1') — rounding is ceil on the real-world value,
-  implemented in `formatLength(..., roundUpToInches)`.
+## Resolved history (condensed)
+- **Upside-down rendering / broken pdfjs v6:** caused by the *modern* pdfjs
+  build requiring `Math.sumPrecise` etc.; fixed by importing the **legacy**
+  build in `src/pdf/loader.ts`. Don't switch back without checking Chrome
+  support.
+- **Overlay was UI-only** → implemented as a dedicated canvas layer in
+  `PageView` + `Workspace.syncOverlays()`.
+- **Poly tools committed only the last segment**, markups weren't editable
+  after placement, `prompt()` popups for text → all replaced with proper
+  multi-click accumulation, move/resize/rotate handles, and inline textarea
+  editors.
+- **Callout** has an elbow leader (`kinkX`/`kinkY`, shared geometry in
+  `util/geometry.ts: calloutLeader()`); **dimensions** are offset-style
+  (`dimensionGeometry()`), with slash/arrow ends and round-up options.
 
-## RESOLVED (2026-06-11, part 2): core tool interactions
-
-- **Polyline/polygon committed only the last segment** — `handlePointerDown`
-  reset the in-progress vertex list on every click. Now poly tools accumulate
-  vertices across clicks; Enter finishes, Escape cancels, double-click or
-  closing on the start point still ends the shape; angle tool auto-completes
-  at 3 points.
-- **Markups were not editable after placement** — added move (drag body) and
-  resize/reshape (drag selection handles) in the select tool, with a single
-  undo step per gesture and Escape to abort. Rectangles now expose 8 handles
-  (corners + edge midpoints); handles added for text, callout (incl. anchor),
-  and angle markups.
-- **Text / Callout / Sticky used browser prompt() popups** — replaced with an
-  inline textarea on the page (commit on blur or Ctrl/Cmd+Enter, Escape
-  cancels). Callout is now Bluebeam-style: drag from subject → text box with
-  border, leader line from nearest box edge, filled arrowhead. Double-click
-  any of these in select mode to re-edit. Sticky renders as a folded-corner
-  note icon.
-- **Dimension** now draws architectural graphics: extension (stick) lines,
-  45° slash ticks, centered ft-in label with halo; Shift locks horizontal/
-  vertical during draw and endpoint drag. Measurement markups default to teal.
-- **Global shortcuts no longer fire while typing** in inputs/textareas
-  (previously typing "r" in any field switched to Rectangle).
-
-## RESOLVED (2026-06-11): upside-down rendering + overlay not working
-
-**Root cause of instability:** the project used pdfjs-dist v6's *modern* build,
-which assumes JS features (`Math.sumPrecise`, `Map.getOrInsertComputed`) the
-installed Chrome doesn't have — the console TypeErrors below were breaking
-rendering, not cosmetic. **Fix:** `src/pdf/loader.ts` now imports the *legacy*
-build (`pdfjs-dist/legacy/build/pdf.mjs` + legacy worker), which polyfills
-these. Verified: Test-PDF.pdf (AUS manual, 272 pp, /Rotate 0) renders upright
-through the legacy build at the pinned version (6.0.227).
-
-**Overlay:** the feature was UI-only — the toggle and dropdowns wrote state but
-nothing rendered it. Now implemented: `PageView` has an `overlayCanvas` layer
-(between PDF and markup layers) with `renderOverlays()`/`clearOverlays()`;
-`Workspace.syncOverlays()` composites the selected pages at slot opacity onto
-the current page and re-syncs on page/zoom/state changes. Also fixed:
-selecting "— Page —" wrongly set page 1 (`Number('') === 0`), and the overlay
-bar's hidden class is now derived from state instead of blindly toggled.
-
-Remaining overlay gap vs Design.rtf: page selection by bookmark name (currently
-page numbers only).
-
----
-
-## Previous bug notes (kept for history): pages render upside down
-Opening `AUS Design Standards Manual-Q1 2026.pdf` renders BOTH the main view and the
-thumbnails rotated 180° (text readable but inverted).
-
-### Relevant code
-`src/pdf/render.ts`
-```ts
-const viewport = page.getViewport({ scale, rotation });
-await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-```
-
-`src/pdf/loader.ts` (per page)
-```ts
-const vp = page.getViewport({ scale: 1, rotation: page.rotate });
-pages.push({ width: vp.width, height: vp.height, rotation: page.rotate });
-```
-
-`src/view/Workspace.ts`
-```ts
-const rotation = doc.pages[pageIndex]?.rotation ?? 0;
-await pv.renderPdf(page, zoom, rotation);
-```
-
-Thumbnails in `src/ui/AppShell.ts` `renderLeftPanel()` use `getViewport({ scale })`
-(defaults rotation to `page.rotate`).
-
-### Analysis so far
-- PDF.js renders upright by default (it Y-flips via `viewport.transform`). Both the main
-  view and thumbnails go through the same default-rotation path, so the inversion is
-  inherent to how this file is being handled, not a divergence between the two paths.
-- A 180° "upside down" result = flip on BOTH axes, i.e. an *extra* 180° relative to upright.
-- Leading hypothesis: this CAD-exported PDF may bake page rotation into the content
-  stream **and** also set `/Rotate 180`. PDF.js applies `/Rotate` once on top of the
-  already-rotated content → net 180°. If so, the fix is to NOT re-apply `page.rotate`
-  for such pages (render with `rotation: 0`) — but this must be verified against a normal
-  PDF so we don't break correctly-authored files.
-- Other things to rule out: pdfjs v6 viewport API change, `pageHeight` math
-  (`viewport.height / zoom` vs `viewport.rawDims.pageHeight`) — note `pageHeight` only
-  affects markup coordinate mapping, not the PDF raster, so it is NOT the cause of the
-  visual flip.
-- CSS: `.page-view` / `.page-layer` have no transforms, so it is not a CSS flip.
-
-### Console warnings seen in dev (pdfjs v6, likely unrelated to the flip)
-- `TypeError: Math.sumPrecise is not a function`
-- `TypeError: this[#methodPromises].getOrInsertComputed is not a function`
-- `Cannot use the same canvas during multiple render() operations` (render re-entrancy;
-  worth guarding by cancelling the prior `RenderTask` before re-rendering a page)
-
-These suggest the runtime may lack very new JS features pdfjs v6 expects. Consider pinning
-pdfjs to a slightly older v6.x or using the `legacy` build if these persist.
-
-### Suggested next steps
-1. **Reproduce in isolation:** generate a known-orientation test PDF with `pdf-lib`
-   (no network needed), render it through the app, and confirm whether a *normal* PDF
-   is also flipped. This separates "code bug" from "this-file-specific".
-2. If only the AUS file flips: log `page.rotate`, `page.view` (viewBox), and
-   `viewport.transform` for page 1 of that file and compare to a normal PDF.
-3. Apply the minimal fix based on findings (most likely: handle the baked-rotation +
-   `/Rotate` double-count), and keep both code paths (main view + thumbnails) consistent.
-4. Add a guard to cancel the previous `RenderTask` per canvas to remove the
-   "same canvas during multiple render()" rejection.
-
-### Files to touch for the fix
-- `src/pdf/render.ts` — `renderPageToCanvas`, `renderThumbnail`
-- `src/pdf/loader.ts` — `loadPageInfos`
-- `src/view/PageView.ts` — `pageHeight` after render (markup coords only)
-- `src/ui/AppShell.ts` — thumbnail rendering in `renderLeftPanel`
-
----
-
-## Other recently completed work
-**Panel toggle UX:** toggle triangle buttons stay visible on the workspace edges when a
-side panel is collapsed (overlay layer `.panel-edge-controls`, `z-index: 30`, event
-delegation on `.main-area`). Panels are resizable via `.panel-resizer` drag handles;
-widths `leftPanelWidth` / `rightPanelWidth` (160–480px) live in the store. Verified on
-localhost:5174.
-
-## Finalized design decisions (in Design.rtf)
-- No pen/freehand; highlighter only. No text highlight/underline/strikethrough, radius,
-  count, stamps, metric, volume, autosave, password.
+## Finalized design decisions (in Design.md)
+- No pen/freehand; highlighter only. No text highlight/underline/strikethrough,
+  radius, count, stamps, metric, volume, autosave, password.
 - Revision cloud = polygon modifier (Shift on close), not a standalone tool.
-- Save + Save As; Flatten whole document; reopen via custom metadata + best-effort
-  annotation parse.
-- Imperial ft-in, no decimals. Paste-in-place (Ctrl+Shift+V): same coords if same page
-  size, else center-align.
+- Save + Save As; Flatten whole document; reopen via custom metadata +
+  best-effort annotation parse.
+- Imperial ft-in, no decimals. Paste-in-place (Ctrl+Shift+V): same coords if
+  same page size, else center-align.
 - Multi-doc tabs, split view with draggable divider, overlay bar, raster snip v1.
 
-## What remains
-1. Fix upside-down rendering (above) — top priority.
-2. Verify thumbnail rotation consistency and markup `pageHeight` math.
-3. Guard render re-entrancy (cancel prior RenderTask per canvas).
-4. Systematic testing with large architectural PDFs.
+## Known limitations / what remains
+1. The Bookmarks tab is a placeholder (PDF outline not parsed yet); overlay
+   page selection is by page number, not bookmark name.
+2. PDF export of complex markups (callout elbow, dimension ticks/labels,
+   dashed styles, measure labels) is simplified relative to on-screen
+   rendering.
+3. Rotated-shape resize keeps the local frame but doesn't pin the opposite
+   corner pixel-perfectly during the drag.
+4. More systematic testing with large architectural PDFs.

@@ -46,7 +46,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   root.className = 'app-shell';
   root.innerHTML = `
     <header class="menubar">
-      <div class="app-mark"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="1.5" width="10" height="13" rx="1.2" stroke="rgba(216,212,227,0.25)" stroke-width="1.3"/><rect x="8" y="5.5" width="10" height="13" rx="1.2" fill="#2a2635" stroke="rgba(216,212,227,0.25)" stroke-width="1.3"/><path d="M10 13.5l4.5-4.5 1.5 1.5-4.5 4.5L10 16z" fill="#6b6280"/></svg></div>
+      <div class="app-mark"><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><rect x="2" y="1.5" width="10" height="13" rx="1.2" stroke="rgba(255,255,255,0.55)" stroke-width="1.3"/><rect x="8" y="5.5" width="10" height="13" rx="1.2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.85)" stroke-width="1.3"/><path d="M10 13.5l4.5-4.5 1.5 1.5-4.5 4.5L10 16z" fill="#fff"/></svg></div>
       <nav class="menu-nav">
         <div class="menu-item" data-menu="file">File<ul class="dropdown">
           <li data-action="new">New…</li>
@@ -83,20 +83,12 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="help">User Guide</li>
         </ul></div>
       </nav>
-      <div class="file-chip"><span class="filename">Untitled</span><span class="dirty-dot"></span></div>
+      <div class="file-chip"><svg width="13" height="15" viewBox="0 0 13 15" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 1.5h6.5l3.5 3.5v8.5h-10z"/><path d="M8 1.5V5h3.5"/></svg><span class="filename">Untitled</span><span class="dirty-dot"></span></div>
       <button class="btn-save" title="Save (Ctrl+S)">Save</button>
     </header>
     <div class="doc-tabs"></div>
-    <div class="ribbon"></div>
     <div class="overlay-bar hidden"></div>
     <div class="main-area">
-      <aside class="left-panel">
-        <div class="panel-inner">
-          <div class="panel-tabs"><button data-tab="bookmarks">Bookmarks</button><button data-tab="thumbnails" class="active">Thumbnails</button></div>
-          <div class="panel-content"></div>
-        </div>
-        <div class="panel-resizer left-resizer" title="Drag to resize"></div>
-      </aside>
       <div class="center-column">
         <div class="viewer-stack">
           <div class="viewer-pane primary"></div>
@@ -105,10 +97,15 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
             <button class="pane-close" title="Close viewer">✕</button>
           </div>
         </div>
-        <div class="hud-scale">Scale: None</div>
-        <div class="hud-page"><button class="page-prev">‹</button><span class="page-label">0/0</span><button class="page-next">›</button></div>
-        <div class="hud-zoom"><button data-zoom="fit">Fit</button><button data-zoom="out">−</button><span class="zoom-label">100%</span><button data-zoom="in">+</button></div>
       </div>
+      <div class="ribbon"></div>
+      <aside class="left-panel">
+        <div class="panel-inner">
+          <div class="panel-tabs"><button data-tab="bookmarks">Bookmarks</button><button data-tab="thumbnails" class="active">Thumbnails</button></div>
+          <div class="panel-content"></div>
+        </div>
+        <div class="panel-resizer left-resizer" title="Drag to resize"></div>
+      </aside>
       <aside class="right-panel">
         <div class="panel-resizer right-resizer" title="Drag to resize"></div>
         <div class="panel-inner">
@@ -117,12 +114,19 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <div class="markups-list"><h4>Markups</h4><ul></ul></div>
         </div>
       </aside>
+      <div class="canvas-hud">
+        <div class="hud-scale">Scale: None</div>
+        <div class="hud-page"><button class="page-prev">‹</button><span class="page-label">0/0</span><button class="page-next">›</button></div>
+        <div class="hud-zoom"><button data-zoom="fit">Fit</button><button data-zoom="out">−</button><span class="zoom-label">100%</span><button data-zoom="in">+</button></div>
+      </div>
       <div class="panel-edge-controls" aria-hidden="false">
         <button class="panel-toggle left-toggle" title="Toggle left panel">◀</button>
         <button class="panel-toggle right-toggle" title="Toggle right panel">▶</button>
       </div>
     </div>
-    <footer class="status-bar"></footer>
+    <footer class="status-bar">
+      <div class="status-text"></div>
+    </footer>
   `;
 
   wireMenus(root, workspace);
@@ -132,6 +136,10 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   wireDropZone(root);
   subscribe(() => renderChrome(root, workspace, secondaryWorkspace));
   renderChrome(root, workspace, secondaryWorkspace);
+  // The panels hang below the floating ribbon, whose height is only known
+  // once the shell is in the DOM — re-run after mount and on window resize.
+  requestAnimationFrame(() => renderChrome(root, workspace, secondaryWorkspace));
+  window.addEventListener('resize', () => renderChrome(root, workspace, secondaryWorkspace));
   return root;
 }
 
@@ -441,22 +449,13 @@ function wireRibbon(root: HTMLElement): void {
     ribbon.appendChild(group);
   }
 
-  const pageGroup = document.createElement('div');
-  pageGroup.className = 'ribbon-group page-defaults';
-  const pd = document.createElement('div');
-  pd.className = 'page-default-controls';
-  // Order: (Overlay, Snip prepended below) → Text Size, Line Weight, Line
-  // Style, Scale, Stroke, Fill, Text
-  pd.innerHTML = `
-    <label>Text Size <select class="text-size">${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === 12 ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-    <label>Line Weight <select class="line-weight">${LINE_WEIGHT_OPTIONS.map((w) => `<option value="${w}" ${w === 1 ? 'selected' : ''}>${w}</option>`).join('')}<option value="custom">Custom…</option></select></label>
-    <label>Line Style <select class="line-style"><option value="solid">Solid</option><option value="dashed">Dash 1</option><option value="dotted">Dash 2</option><option value="centerline">Centerline</option><option value="cloud">Cloud</option></select></label>
-    <label>Scale <select class="scale-select"><option>None</option>${ARCH_SCALES.map((s) => `<option>${s}</option>`).join('')}${ENG_SCALES.map((s) => `<option>${s}</option>`).join('')}<option value="Custom">Custom…</option></select></label>
-    <label>Line <button type="button" class="color-box stroke-color" title="Line color"></button></label>
-    <label>Fill <button type="button" class="color-box fill-color" title="Fill color"></button></label>
-    <label>Text <button type="button" class="color-box text-color" title="Text color"></button></label>
-  `;
-  // Overlay + Snip icon buttons go first (left), following the Measure tools
+  // Edit group — Overlay + Snip icon buttons, following the Measure tools
+  const editGroup = document.createElement('div');
+  editGroup.className = 'ribbon-group';
+  editGroup.innerHTML = `<span class="ribbon-label">Edit</span>`;
+  const editTools = document.createElement('div');
+  editTools.className = 'ribbon-tools';
+
   const overlayBtn = document.createElement('button');
   overlayBtn.className = 'tool-btn btn-overlay';
   overlayBtn.dataset.tip = 'Toggle Overlay';
@@ -468,8 +467,24 @@ function wireRibbon(root: HTMLElement): void {
   snipBtn.dataset.tip = 'Snip Region  ·  S';
   snipBtn.innerHTML = TOOL_ICONS.snip ?? '';
 
-  pd.prepend(snipBtn);
-  pd.prepend(overlayBtn);
+  editTools.append(overlayBtn, snipBtn);
+  editGroup.appendChild(editTools);
+  ribbon.appendChild(editGroup);
+
+  const pageGroup = document.createElement('div');
+  pageGroup.className = 'ribbon-group page-defaults';
+  const pd = document.createElement('div');
+  pd.className = 'page-default-controls';
+  // Order: Text (size), Weight, Style, Scale, Line / Fill / Text colors
+  pd.innerHTML = `
+    <label>Text <select class="text-size">${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === 12 ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
+    <label>Weight <select class="line-weight">${LINE_WEIGHT_OPTIONS.map((w) => `<option value="${w}" ${w === 1 ? 'selected' : ''}>${w}</option>`).join('')}<option value="custom">Custom…</option></select></label>
+    <label>Style <select class="line-style"><option value="solid">Solid</option><option value="dashed">Dash 1</option><option value="dotted">Dash 2</option><option value="centerline">Centerline</option><option value="cloud">Cloud</option></select></label>
+    <label>Scale <select class="scale-select"><option>None</option>${ARCH_SCALES.map((s) => `<option>${s}</option>`).join('')}${ENG_SCALES.map((s) => `<option>${s}</option>`).join('')}<option value="Custom">Custom…</option></select></label>
+    <label>Line <button type="button" class="color-box stroke-color" title="Line color"></button></label>
+    <label>Fill <button type="button" class="color-box fill-color" title="Fill color"></button></label>
+    <label>Text <button type="button" class="color-box text-color" title="Text color"></button></label>
+  `;
 
   pageGroup.appendChild(pd);
   ribbon.appendChild(pageGroup);
@@ -561,7 +576,7 @@ function wireRibbon(root: HTMLElement): void {
     });
   });
 
-  pd.querySelector('.btn-overlay')?.addEventListener('click', () => {
+  overlayBtn.addEventListener('click', () => {
     updateActiveDoc((d) => ({ ...d, overlayEnabled: !d.overlayEnabled }));
     // Derive visibility from state (not a blind toggle) so it can't drift
     const bar = root.querySelector('.overlay-bar')!;
@@ -569,11 +584,14 @@ function wireRibbon(root: HTMLElement): void {
     renderOverlayBar(root);
   });
 
-  pd.querySelector('.btn-snip')?.addEventListener('click', () => setActiveTool('snip'));
+  snipBtn.addEventListener('click', () => setActiveTool('snip'));
 }
 
 const PANEL_MIN = 160;
 const PANEL_MAX = 480;
+/** Margin around the floating glass chrome (ribbon / panels) — keep in sync
+ *  with the corresponding inset values in main.css. */
+const GLASS_GAP = 8;
 
 function wirePanels(root: HTMLElement, _ws: Workspace): void {
   root.querySelector('.main-area')?.addEventListener('click', (e) => {
@@ -617,7 +635,7 @@ function wirePanelResize(root: HTMLElement): void {
   leftResizer?.addEventListener('pointermove', (e) => {
     if (!leftDragging) return;
     const rect = mainArea.getBoundingClientRect();
-    const width = Math.max(PANEL_MIN, Math.min(PANEL_MAX, e.clientX - rect.left));
+    const width = Math.max(PANEL_MIN, Math.min(PANEL_MAX, e.clientX - rect.left - GLASS_GAP));
     setState({ leftPanelWidth: width, leftPanelVisible: true });
   });
   leftResizer?.addEventListener('pointerup', () => {
@@ -632,7 +650,7 @@ function wirePanelResize(root: HTMLElement): void {
   rightResizer?.addEventListener('pointermove', (e) => {
     if (!rightDragging) return;
     const rect = mainArea.getBoundingClientRect();
-    const width = Math.max(PANEL_MIN, Math.min(PANEL_MAX, rect.right - e.clientX));
+    const width = Math.max(PANEL_MIN, Math.min(PANEL_MAX, rect.right - e.clientX - GLASS_GAP));
     setState({ rightPanelWidth: width, rightPanelVisible: true });
   });
   rightResizer?.addEventListener('pointerup', () => {
@@ -669,13 +687,20 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   const leftToggle = root.querySelector('.left-toggle') as HTMLButtonElement | null;
   const rightToggle = root.querySelector('.right-toggle') as HTMLButtonElement | null;
 
+  // The ribbon floats over the canvas: the glass panels start just below it.
+  // GLASS_GAP must match the panel/ribbon margins in main.css.
+  const ribbonEl = root.querySelector('.ribbon') as HTMLElement | null;
+  const panelTop = (ribbonEl?.offsetHeight ?? 0) + 2 * GLASS_GAP;
+
   if (leftPanel) {
     leftPanel.classList.toggle('collapsed', !state.leftPanelVisible);
     leftPanel.style.width = state.leftPanelVisible ? `${state.leftPanelWidth}px` : '0';
+    leftPanel.style.top = `${panelTop}px`;
   }
   if (rightPanel) {
     rightPanel.classList.toggle('collapsed', !state.rightPanelVisible);
     rightPanel.style.width = state.rightPanelVisible ? `${state.rightPanelWidth}px` : '0';
+    rightPanel.style.top = `${panelTop}px`;
   }
   if (leftToggle) {
     leftToggle.textContent = state.leftPanelVisible ? '◀' : '▶';
@@ -684,7 +709,7 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     leftToggle.classList.toggle('inside-panel', state.leftPanelVisible);
     if (state.leftPanelVisible) {
       // Tuck the button inside the panel (right edge just left of the resizer)
-      leftToggle.style.left = `${state.leftPanelWidth - 4}px`;
+      leftToggle.style.left = `${GLASS_GAP + state.leftPanelWidth - 4}px`;
       leftToggle.style.transform = 'translate(-100%, -50%)';
     } else {
       leftToggle.style.left = '0px';
@@ -697,7 +722,7 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     rightToggle.classList.toggle('panel-collapsed', !state.rightPanelVisible);
     rightToggle.classList.toggle('inside-panel', state.rightPanelVisible);
     if (state.rightPanelVisible) {
-      rightToggle.style.right = `${state.rightPanelWidth - 4}px`;
+      rightToggle.style.right = `${GLASS_GAP + state.rightPanelWidth - 4}px`;
       rightToggle.style.transform = 'translate(100%, -50%)';
     } else {
       rightToggle.style.right = '0px';
@@ -727,7 +752,7 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   if (doc) {
     const defaults = doc.pageDefaults[doc.currentPage];
     root.querySelector('.hud-scale')!.textContent = `Scale: ${defaults?.scaleLabel ?? 'None'}`;
-    root.querySelector('.page-label')!.textContent = `${doc.currentPage + 1}/${doc.pageCount}`;
+    root.querySelector('.page-label')!.textContent = `${doc.currentPage + 1} / ${doc.pageCount}`;
     root.querySelector('.zoom-label')!.textContent = `${Math.round(doc.zoom * 100)}%`;
     // Sync ribbon Page Default controls with the active page's values
     if (defaults) {
@@ -977,14 +1002,24 @@ function renderRightPanel(root: HTMLElement): void {
     const li = document.createElement('li');
     li.dataset.id = m.id;
     if (selectedSet.has(m.id)) li.classList.add('selected');
-    // Item name prominent; the id/description dimmed so it doesn't compete
+    // Colored identity dot (the markup's resolved stroke color)
+    const dot = document.createElement('span');
+    dot.className = 'mk-dot';
+    dot.style.backgroundColor =
+      m.overrides?.strokeColor ?? doc.pageDefaults[m.pageIndex]?.strokeColor ?? DEFAULT_COLOR;
+    // Item name prominent; the info text (markup text content when there is
+    // one, else the description/id) abbreviated to "ab…yz" on the right
     const name = document.createElement('span');
     name.className = 'mk-name';
     name.textContent = m.type;
     const idSpan = document.createElement('span');
     idSpan.className = 'mk-id';
-    idSpan.textContent = m.description ?? m.id.slice(0, 6);
-    li.append(name, document.createTextNode(' '), idSpan);
+    const info = ('content' in m && m.content ? m.content : (m.description ?? m.id.slice(0, 6)))
+      .replace(/\s+/g, ' ')
+      .trim();
+    idSpan.textContent = info.length > 5 ? `${info.slice(0, 2)}…${info.slice(-2)}` : info;
+    idSpan.title = info;
+    li.append(dot, name, idSpan);
     wireMarkupRowDrag(li, m.id, list as HTMLElement);
     list.appendChild(li);
   }
@@ -1089,6 +1124,24 @@ const ROUND_TO_OPTIONS: { value: string; label: string }[] = [
   { value: '6', label: '6"' },
   { value: '12', label: `1'` },
 ];
+
+/** Markup type → TOOL_ICONS key, for the properties-panel header icon. */
+const PROP_ICON: Record<string, string> = {
+  rectangle: 'rectangle',
+  highlighter: 'highlighter',
+  inkHighlight: 'highlighter',
+  ellipse: 'ellipse',
+  polygon: 'polygon',
+  cloud: 'polygon',
+  line: 'line',
+  polyline: 'polyline',
+  text: 'text',
+  callout: 'callout',
+  sticky: 'sticky',
+  dimension: 'dimension',
+  measureAngle: 'measureAngle',
+  snipImage: 'snip',
+};
 
 /** Markups that put text or numbers on the page → get Text Size + Font. */
 const TEXT_BEARING_TYPES = [
@@ -1207,10 +1260,12 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   if (TEXT_BEARING_TYPES.includes(m.type)) {
     const fontSize = m.overrides?.fontSize ?? defaults?.fontSize ?? 12;
     const fontFamily = m.overrides?.fontFamily ?? defaults?.fontFamily ?? 'Arial';
+    const textColor = m.overrides?.textColor ?? defaults?.textColor ?? DEFAULT_COLOR;
     const sizeOpts = TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === fontSize ? 'selected' : ''}>${s}</option>`).join('') +
       (TEXT_SIZE_OPTIONS.includes(fontSize) ? '' : `<option value="${fontSize}" selected>${fontSize}</option>`);
     textSection = `
     <hr>
+    <label>Text color <input type="color" class="prop-color" data-prop="textColor" value="${textColor}" title="More colors…"></label>
     <label>Text size <select data-prop="fontSize">${sizeOpts}</select></label>
     <label>Font <select data-prop="fontFamily">
       ${FONT_FAMILIES.map((f) => `<option value="${f}" ${f === fontFamily ? 'selected' : ''}>${f}</option>`).join('')}
@@ -1287,8 +1342,13 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     </select></label>`;
   }
 
-  return `<div class="prop-block"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p>
-    <label>Color <input type="color" class="prop-color" data-prop="strokeColor" value="${stroke}" title="More colors…"></label>
+  return `<div class="prop-block">
+    <div class="prop-head">
+      <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
+      <div class="prop-head-text"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p></div>
+    </div>
+    <div class="prop-section-label">Appearance</div>
+    <label>Line <input type="color" class="prop-color" data-prop="strokeColor" value="${stroke}" title="More colors…"></label>
     ${swatches}
     ${fillSection}
     <label>Weight <select data-prop="lineWeight">${weightOptions}</select></label>
@@ -1468,7 +1528,7 @@ function renderTotals(doc: ReturnType<typeof getActiveDoc>): string {
 function renderStatusBar(root: HTMLElement): void {
   const doc = getActiveDoc();
   const state = getState();
-  const bar = root.querySelector('.status-bar')!;
+  const bar = root.querySelector('.status-bar .status-text')!;
   const p = state.cursorPagePoint;
   const page = doc?.pages[doc.currentPage];
   bar.textContent = [

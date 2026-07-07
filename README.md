@@ -21,7 +21,7 @@ npm run preview
 
 ## Features
 
-- **View**: multi-page PDFs, pan/zoom, continuous/single mode, thumbnails, bookmarks panel, page HUD, zoom HUD, scale chip
+- **View**: multi-page PDFs, pan/zoom, continuous/single mode, thumbnails, bookmarks panel, status-bar page/zoom/scale controls
 - **Markup**: rectangle, ellipse, polygon (Shift+P, Shift on close = revision cloud), line, polyline, highlighter, text, callout, sticky
 - **Measure**: calibrate, dimension, polyline length, area, angle — imperial ft-in, no decimals
 - **Edit**: undo/redo, cut/copy/paste, paste-in-place (Ctrl+Shift+V), duplicate, delete, flatten whole document
