@@ -392,7 +392,9 @@ input, select, textarea, button {
   font-size: var(--font-xs);
   line-height: 16px;
   letter-spacing: 0.12em;
-  color: var(--text-3);
+  /* text-2, not text-3 — the glass ribbon sits over the light canvas, so the
+     effective background is mid-tone and needs the brighter caption color */
+  color: var(--text-2);
   text-transform: uppercase;
   font-weight: 500;
   user-select: none;
@@ -493,7 +495,7 @@ input, select, textarea, button {
   align-items: center;
   justify-items: start;
   font-size: var(--font-xs);
-  color: var(--text-3);
+  color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-weight: 500;

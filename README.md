@@ -8,7 +8,21 @@ The interface is an *Aurora liquid glass* design: the sheet fills the whole
 window and the toolbar, side panels and viewer controls float above it as
 frosted-glass overlays, so the drawing shows through, blurred.
 
-![The Markup Studio workspace](docs/graphics/hero.svg)
+![The Markup Studio workspace](docs/graphics/workspace.png)
+
+1. **Menu bar** — File / Edit / View / Help, document tabs, filename chip, Save
+2. **Canvas** — the sheet fills the window and scrolls under the glass chrome
+3. **Glass ribbon** — every tool plus the per-page defaults (see below)
+4. **Document rail** — page thumbnails and bookmarks
+5. **Inspector** — properties of the selected markup, totals, markups list
+6. **Canvas HUD** — scale chip · page navigation · fit / zoom
+7. **Status bar** — active tool, calibration, cursor position, markup count, sheet size
+
+The toolbar, up close — tool groups on the left, page defaults (text size,
+line weight, line style, scale, and the Line / Fill / Text colors applied to
+new markups) on the right:
+
+![The toolbar](docs/graphics/toolbar.png)
 
 ## Quick start
 
