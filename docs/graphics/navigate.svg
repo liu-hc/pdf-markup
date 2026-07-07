@@ -1,0 +1,59 @@
+<svg viewBox="0 0 900 270" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+  <rect x="0" y="0" width="900" height="270" rx="18" fill="#eef0f8"/>
+
+  <!-- Flip -->
+  <rect x="28" y="24" width="196" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <g stroke="#1d2150" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M85 60 v-8 c0 -4 3 -7 7 -7 h34 l26 26 v30"/>
+    <path d="M126 45 v26 h26"/>
+    <path d="M85 78 v34 c0 4 3 7 7 7 h27" stroke-dasharray="4 3.5"/>
+    <path d="M152 90 a30 30 0 0 1 -22 34"/>
+    <path d="M122 108 l8 16 l16 -6" fill="none"/>
+  </g>
+  <text x="126" y="152" font-size="11" fill="#5c618f" text-anchor="middle">wheel turns pages</text>
+  <text x="126" y="212" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Flip · F</text>
+  <text x="126" y="234" font-size="11" fill="#5c618f" text-anchor="middle">page through the set</text>
+
+  <!-- Pan -->
+  <rect x="252" y="24" width="196" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <g stroke="#1d2150" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M330 92 V64 a7 7 0 0 1 14 0 v22"/>
+    <path d="M344 85 V58 a7 7 0 0 1 14 0 v28"/>
+    <path d="M358 88 V68 a7 7 0 0 1 14 0 v28"/>
+    <path d="M372 86 a7 7 0 0 1 14 0 v20 c0 17 -11 30 -30 30 c-11 0 -19 -4 -25 -12 l-14 -20 c-3 -5 3 -11 9 -8 l6 4 v-8"/>
+  </g>
+  <g stroke="#4c5fe6" stroke-width="1.6" fill="#4c5fe6">
+    <path d="M290 70 l-14 0 m4 -5 l-5 5 l5 5" fill="none"/>
+    <path d="M414 130 l14 0 m-4 -5 l5 5 l-5 5" fill="none"/>
+  </g>
+  <text x="350" y="152" font-size="11" fill="#5c618f" text-anchor="middle">middle-drag works on any tool</text>
+  <text x="350" y="212" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Pan · H</text>
+  <text x="350" y="234" font-size="11" fill="#5c618f" text-anchor="middle">grab and move the sheet</text>
+
+  <!-- Zoom -->
+  <rect x="476" y="24" width="196" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <g stroke="#1d2150" stroke-width="1.8" fill="none" stroke-linecap="round">
+    <circle cx="566" cy="88" r="26"/>
+    <line x1="585" y1="107" x2="604" y2="126"/>
+    <line x1="566" y1="77" x2="566" y2="99"/>
+    <line x1="555" y1="88" x2="577" y2="88"/>
+  </g>
+  <text x="574" y="152" font-size="11" fill="#5c618f" text-anchor="middle">wheel zooms at the cursor</text>
+  <text x="574" y="212" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Zoom Page · Z</text>
+  <text x="574" y="234" font-size="11" fill="#5c618f" text-anchor="middle">double middle-click = 100%</text>
+
+  <!-- Select -->
+  <rect x="700" y="24" width="196" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <rect x="740" y="60" width="90" height="58" fill="#2f6fe0" fill-opacity="0.1" stroke="#2f6fe0" stroke-width="1.5"/>
+  <g fill="#ffffff" stroke="#2f6fe0" stroke-width="1.4">
+    <rect x="735" y="55" width="9" height="9"/><rect x="781" y="55" width="9" height="9"/><rect x="826" y="55" width="9" height="9"/>
+    <rect x="735" y="85" width="9" height="9"/><rect x="826" y="85" width="9" height="9"/>
+    <rect x="735" y="113" width="9" height="9"/><rect x="781" y="113" width="9" height="9"/><rect x="826" y="113" width="9" height="9"/>
+  </g>
+  <circle cx="726" cy="46" r="4.5" fill="#7a97e8" stroke="#fff"/>
+  <circle cx="845" cy="46" r="4.5" fill="#7a97e8" stroke="#fff"/>
+  <path d="M800 96 l0 34 l9 -9 l6 14 l7 -3 l-6 -14 l12 -1 z" fill="#1d2150" stroke="#ffffff" stroke-width="1.2"/>
+  <text x="798" y="152" font-size="11" fill="#5c618f" text-anchor="middle">8 resize + rotate handles</text>
+  <text x="798" y="212" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Select</text>
+  <text x="798" y="234" font-size="11" fill="#5c618f" text-anchor="middle">move · resize · rotate · edit</text>
+</svg>

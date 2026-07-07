@@ -1,0 +1,52 @@
+<svg viewBox="0 0 900 260" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+  <rect x="0" y="0" width="900" height="260" rx="18" fill="#eef0f8"/>
+
+  <!-- Split view -->
+  <rect x="28" y="24" width="272" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <rect x="48" y="44" width="110" height="120" fill="#dcdfec" rx="6"/>
+  <rect x="170" y="44" width="110" height="120" fill="#dcdfec" rx="6"/>
+  <rect x="62" y="60" width="82" height="88" fill="#ffffff" stroke="#c9cede"/>
+  <rect x="192" y="76" width="66" height="56" fill="#ffffff" stroke="#c9cede"/>
+  <g stroke="#3a3f55" stroke-width="1">
+    <rect x="72" y="72" width="30" height="22" fill="none"/>
+    <rect x="72" y="102" width="60" height="34" fill="none"/>
+    <rect x="200" y="86" width="24" height="18" fill="none"/>
+  </g>
+  <rect x="160" y="44" width="8" height="120" rx="3" fill="#4c5fe6"/>
+  <text x="103" y="58" font-size="8" fill="#5c618f" text-anchor="middle">100%</text>
+  <text x="225" y="58" font-size="8" fill="#5c618f" text-anchor="middle">240%</text>
+  <text x="164" y="210" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Split view</text>
+  <text x="164" y="230" font-size="10.5" fill="#5c618f" text-anchor="middle">same page twice, independent zoom</text>
+
+  <!-- Overlay -->
+  <rect x="316" y="24" width="272" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <g transform="translate(366 54)">
+    <rect x="0" y="14" width="96" height="72" fill="#ffffff" stroke="#c9cede"/>
+    <g stroke="#3a3f55" stroke-width="1.2" fill="none"><rect x="14" y="28" width="40" height="30"/><line x1="54" y1="43" x2="82" y2="43"/></g>
+    <rect x="24" y="0" width="96" height="72" fill="#ffffff" fill-opacity="0.55" stroke="#c02020" stroke-opacity="0.6"/>
+    <g stroke="#c02020" stroke-width="1.2" fill="none" opacity="0.6"><rect x="38" y="14" width="46" height="30"/><line x1="84" y1="29" x2="106" y2="29"/></g>
+  </g>
+  <rect x="500" y="64" width="64" height="16" rx="8" fill="#262b58"/>
+  <text x="532" y="75.5" font-size="8.5" fill="#e8eafb" text-anchor="middle">60% · ×</text>
+  <text x="532" y="98" font-size="8.5" fill="#5c618f" text-anchor="middle">opacity ·</text>
+  <text x="532" y="110" font-size="8.5" fill="#5c618f" text-anchor="middle">multiply</text>
+  <text x="452" y="210" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Overlay</text>
+  <text x="452" y="230" font-size="10.5" fill="#5c618f" text-anchor="middle">blend 2 pages over the current one</text>
+
+  <!-- Snip -->
+  <rect x="604" y="24" width="272" height="160" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <rect x="640" y="52" width="120" height="84" fill="#ffffff" stroke="#c9cede"/>
+  <g stroke="#3a3f55" stroke-width="1.1" fill="none">
+    <rect x="652" y="64" width="38" height="26"/><rect x="652" y="98" width="70" height="28"/><line x1="690" y1="77" x2="748" y2="77"/>
+  </g>
+  <rect x="646" y="58" width="66" height="44" fill="#2f6fe0" fill-opacity="0.1" stroke="#2f6fe0" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <g stroke="#1d2150" stroke-width="1.5" fill="none">
+    <circle cx="782" cy="120" r="6"/><circle cx="800" cy="110" r="6"/>
+    <line x1="786" y1="115" x2="800" y2="88"/><line x1="796" y1="105" x2="778" y2="92"/>
+  </g>
+  <path d="M726 108 q34 14 56 -8" stroke="#4c5fe6" stroke-width="1.6" fill="none" stroke-dasharray="4 3"/>
+  <text x="812" y="70" font-size="9" fill="#5c618f" text-anchor="end">⌘V pastes</text>
+  <text x="812" y="83" font-size="9" fill="#5c618f" text-anchor="end">at cursor</text>
+  <text x="740" y="210" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Snip · S</text>
+  <text x="740" y="230" font-size="10.5" fill="#5c618f" text-anchor="middle">copy a region + markups to clipboard</text>
+</svg>

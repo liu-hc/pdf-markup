@@ -1,0 +1,40 @@
+<svg viewBox="0 0 900 260" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+  <rect x="0" y="0" width="900" height="260" rx="18" fill="#eef0f8"/>
+
+  <!-- Text box -->
+  <rect x="28" y="24" width="272" height="150" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <rect x="60" y="56" width="208" height="66" fill="#ffff00" fill-opacity="0.12" stroke="#002060" stroke-width="1.8"/>
+  <text x="70" y="78" font-size="11" fill="#c02020">VERIFY CEILING HEIGHT</text>
+  <text x="70" y="96" font-size="11" fill="#c02020">WITH SERVICES ABOVE</text>
+  <g font-size="9" fill="#5c618f">
+    <text x="60" y="140">border = Line color · glyphs = Text color</text>
+    <text x="60" y="154">background = Infill — all independent</text>
+  </g>
+  <text x="164" y="204" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Text · T</text>
+  <text x="164" y="224" font-size="11" fill="#5c618f" text-anchor="middle">two clicks size the box, type in place</text>
+
+  <!-- Callout -->
+  <rect x="316" y="24" width="272" height="150" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <circle cx="366" cy="132" r="14" fill="none" stroke="#c9cede"/>
+  <circle cx="366" cy="132" r="4" fill="#c9cede"/>
+  <rect x="452" y="48" width="118" height="40" fill="#fffef5" stroke="#002060" stroke-width="1.8"/>
+  <text x="462" y="66" font-size="10" fill="#002060">RELOCATE FLOOR</text>
+  <text x="462" y="80" font-size="10" fill="#002060">WASTE — SEE HYD</text>
+  <line x1="452" y1="68" x2="416" y2="68" stroke="#002060" stroke-width="1.8"/>
+  <line x1="416" y1="68" x2="382" y2="120" stroke="#002060" stroke-width="1.8"/>
+  <polygon points="376,129 390,112 397,122" fill="#002060"/>
+  <circle cx="416" cy="68" r="4" fill="#ffffff" stroke="#4c5fe6" stroke-width="1.6"/>
+  <text x="416" y="52" font-size="9" fill="#4c5fe6" text-anchor="middle">elbow</text>
+  <text x="452" y="204" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Callout · Q</text>
+  <text x="452" y="224" font-size="11" fill="#5c618f" text-anchor="middle">arrow → elbow → box, then type</text>
+
+  <!-- Sticky -->
+  <rect x="604" y="24" width="272" height="150" rx="12" fill="#ffffff" stroke="#e2e5f2"/>
+  <path d="M700 58 h56 v40 l-14 14 h-42 z" fill="#f5c542" stroke="#a87b14" stroke-width="1.6"/>
+  <path d="M742 112 v-14 h14" fill="none" stroke="#a87b14" stroke-width="1.6"/>
+  <line x1="712" y1="76" x2="746" y2="76" stroke="#a87b14" stroke-width="1.4"/>
+  <line x1="712" y1="88" x2="734" y2="88" stroke="#a87b14" stroke-width="1.4"/>
+  <text x="740" y="140" font-size="9.5" fill="#5c618f" text-anchor="middle">note text stays off the drawing</text>
+  <text x="740" y="204" font-size="14" fill="#1d2150" text-anchor="middle" font-weight="bold">Sticky note</text>
+  <text x="740" y="224" font-size="11" fill="#5c618f" text-anchor="middle">double-click to edit the comment</text>
+</svg>
