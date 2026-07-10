@@ -78,8 +78,6 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="paste-in-place">Paste in Place</li>
           <li data-action="duplicate">Duplicate</li>
           <li data-action="delete">Delete</li>
-          <li class="sep"></li>
-          <li data-action="flatten">Flatten</li>
         </ul></div>
         <div class="menu-item" data-menu="view">View<ul class="dropdown">
           <li data-action="continuous">Continuous</li>
@@ -88,6 +86,16 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="split-v">Split Vertical</li>
           <li data-action="split-h">Split Horizontal</li>
           <li data-action="split-none">Close Split</li>
+        </ul></div>
+        <div class="menu-item" data-menu="markup">Markup<ul class="dropdown">
+          <li data-action="lock-page">Lock All on Current Page</li>
+          <li data-action="lock-file">Lock All in Current File</li>
+          <li class="sep"></li>
+          <li data-action="unlock-page">Unlock All on Current Page</li>
+          <li data-action="unlock-file">Unlock All in Current File</li>
+          <li class="sep"></li>
+          <li data-action="flatten-page">Flatten All on Current Page…</li>
+          <li data-action="flatten-file">Flatten All in Current File…</li>
         </ul></div>
         <div class="menu-item" data-menu="help">Help<ul class="dropdown">
           <li data-action="help">User Guide</li>
@@ -196,10 +204,56 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           handleEditAction(action);
           ws.redrawAllMarkups();
           break;
-        case 'flatten':
-          if (doc) await flattenDocument(doc.id);
+        case 'lock-page':
+        case 'lock-file':
+        case 'unlock-page':
+        case 'unlock-file': {
+          if (!doc) break;
+          const locking = action.startsWith('lock');
+          const pageOnly = action.endsWith('-page');
+          const next = doc.markups.map((m) =>
+            !pageOnly || m.pageIndex === doc.currentPage ? { ...m, locked: locking } : m,
+          );
+          const { applyMarkupChange } = await import('../state/undo');
+          applyMarkupChange(locking ? 'Lock markups' : 'Unlock markups', next);
+          // Locked markups can't stay selected
+          if (locking) setState({ selectedMarkupIds: [] });
           ws.redrawAllMarkups();
           break;
+        }
+        case 'flatten-page': {
+          if (!doc) break;
+          const n = doc.markups.filter((m) => m.pageIndex === doc.currentPage).length;
+          if (!n) break;
+          const ok = await confirmDialog(
+            'Flatten page',
+            `Permanently embed ${n} markup${n === 1 ? '' : 's'} on page ${doc.currentPage + 1} into the PDF? They will no longer be editable, and this cannot be undone.`,
+            'Flatten',
+          );
+          if (!ok) break;
+          const { flattenPage } = await import('../pdf/loader');
+          await flattenPage(doc.id, doc.currentPage);
+          setState({ selectedMarkupIds: [] });
+          (await import('../state/undo')).clearHistory();
+          ws.redrawAllMarkups();
+          break;
+        }
+        case 'flatten-file': {
+          if (!doc) break;
+          const n = doc.markups.length;
+          if (!n) break;
+          const ok = await confirmDialog(
+            'Flatten file',
+            `Permanently embed all ${n} markup${n === 1 ? '' : 's'} in "${doc.filename}" into the PDF? They will no longer be editable, and this cannot be undone.`,
+            'Flatten',
+          );
+          if (!ok) break;
+          await flattenDocument(doc.id);
+          setState({ selectedMarkupIds: [] });
+          (await import('../state/undo')).clearHistory();
+          ws.redrawAllMarkups();
+          break;
+        }
         case 'continuous':
           updateActiveDoc((d) => ({ ...d, viewMode: 'continuous' }));
           ws.refresh();
@@ -282,6 +336,41 @@ function askSaveBeforeClose(message: string): Promise<'save' | 'discard' | 'canc
   });
 }
 
+/** Simple OK/Cancel confirmation modal. Resolves true when confirmed. */
+function confirmDialog(title: string, message: string, confirmLabel = 'OK'): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-card" style="max-width:420px">
+      <div class="modal-head"><span>${title}</span><button class="modal-close" title="Close">✕</button></div>
+      <div class="modal-body"><p style="margin:0 0 14px">${message}</p>
+        <div class="modal-actions">
+          <button class="modal-btn-ghost" data-r="no">Cancel</button>
+          <button class="modal-btn" data-r="yes">${confirmLabel}</button>
+        </div></div></div>`;
+    const finish = (r: boolean): void => {
+      if (done) return;
+      done = true;
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(r);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') finish(false);
+    };
+    overlay.addEventListener('pointerdown', (e) => {
+      if (e.target === overlay) finish(false);
+    });
+    overlay.querySelector('.modal-close')?.addEventListener('click', () => finish(false));
+    overlay.querySelectorAll<HTMLElement>('[data-r]').forEach((b) =>
+      b.addEventListener('click', () => finish(b.dataset.r === 'yes')),
+    );
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+  });
+}
+
 /** Close a document, prompting to save first if it has unsaved changes (the
  *  doc is only marked dirty by edits — navigation after a save won't prompt).
  *  Returns false if the user cancelled. */
@@ -353,7 +442,7 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>The workspace</h4>
       ${fig(guideWorkspace, 'The Markup Studio workspace')}
       <ol class="help-legend">
-        <li><strong>Menu bar</strong> — File / Edit / View / Help, document tabs, filename chip, Save</li>
+        <li><strong>Menu bar</strong> — File / Edit / View / Markup / Help, document tabs, filename chip, Save</li>
         <li><strong>Canvas</strong> — the sheet fills the window and scrolls under the glass chrome</li>
         <li><strong>Glass ribbon</strong> — every tool plus the per-page defaults</li>
         <li><strong>Document rail</strong> — page thumbnails and bookmarks</li>
@@ -412,13 +501,15 @@ function showHelpDialog(): void {
       <ul>
         <li>Selecting a markup opens its properties: <strong>Line / Infill / Text colors</strong> (each overriding the page defaults independently), weight, line style, opacity, rotation, arrows, fonts, and measurement options.</li>
         <li>The <strong>Markups list</strong> shows every markup on the page — color dot, type, and the markup's text abbreviated to its first and last letters. Click to select; <strong>drag rows to change the draw order</strong>, guided by a glowing insertion line.</li>
+        <li><strong>Lock</strong> — the padlock at the end of each row (or <strong>Markup ▸ Lock All…</strong>) reversibly "flattens" a markup: it stays drawn in its draw-order slot but can't be selected, moved or edited until unlocked.</li>
+        <li><strong>Flatten</strong> — <strong>Markup ▸ Flatten All on Current Page / in Current File</strong> permanently embeds markups into the PDF. They disappear from the markups list and cannot be recovered, so a confirmation is asked first.</li>
         <li>Full editing everywhere: undo/redo history, cut/copy/paste, paste-in-place, duplicate — every gesture is exactly one undo step.</li>
       </ul>
     </div>
 
     <div class="help-section"><h4>Documents: open → save → reopen</h4>
       ${fig(guideDocuments, 'Document lifecycle: open, mark up, save, reopen editable, or flatten')}
-      <p>Saving writes the markups into the PDF itself — both as visible vector content and as recoverable metadata — so a saved file <strong>reopens with every markup still editable</strong>. Use <strong>Edit ▸ Flatten</strong> to bake markups permanently into the page instead. Saving writes in place where the browser allows it (with Save As and download fallbacks). Images (JPG/PNG) open wrapped in a single PDF page.</p>
+      <p>Saving writes the markups into the PDF itself — both as visible vector content and as recoverable metadata — so a saved file <strong>reopens with every markup still editable</strong>. Use <strong>Markup ▸ Flatten All…</strong> to bake markups permanently into the page instead. Saving writes in place where the browser allows it (with Save As and download fallbacks). Images (JPG/PNG) open wrapped in a single PDF page.</p>
     </div>
 
     <div class="help-section"><h4>Advanced</h4>
@@ -1121,6 +1212,7 @@ function renderRightPanel(root: HTMLElement): void {
     const li = document.createElement('li');
     li.dataset.id = m.id;
     if (selectedSet.has(m.id)) li.classList.add('selected');
+    if (m.locked) li.classList.add('mk-locked');
     // Colored identity dot (the markup's resolved stroke color)
     const dot = document.createElement('span');
     dot.className = 'mk-dot';
@@ -1138,17 +1230,50 @@ function renderRightPanel(root: HTMLElement): void {
       .trim();
     idSpan.textContent = info.length > 5 ? `${info.slice(0, 2)}…${info.slice(-2)}` : info;
     idSpan.title = info;
-    li.append(dot, name, idSpan);
-    wireMarkupRowDrag(li, m.id, list as HTMLElement);
+    // Padlock: unlocked by default; click to lock (= reversible flatten —
+    // drawn in place but not selectable/editable until unlocked)
+    const lockBtn = document.createElement('button');
+    lockBtn.className = 'mk-lock' + (m.locked ? ' locked' : '');
+    lockBtn.title = m.locked ? 'Locked — click to unlock' : 'Click to lock';
+    lockBtn.innerHTML = m.locked ? LOCK_ICON : UNLOCK_ICON;
+    lockBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    lockBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMarkupLock(m.id);
+    });
+    li.append(dot, name, idSpan, lockBtn);
+    wireMarkupRowDrag(li, m.id, list as HTMLElement, !!m.locked);
     list.appendChild(li);
   }
 }
 
+/** Padlock icons for the markups list (12px, stroke = currentColor). */
+const UNLOCK_ICON = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5.4" width="8" height="5.1" rx="1.1"/><path d="M4 5.4V3.6a2 2 0 0 1 3.9-.6"/></svg>`;
+const LOCK_ICON = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5.4" width="8" height="5.1" rx="1.1"/><path d="M4 5.4V3.9a2 2 0 0 1 4 0v1.5"/></svg>`;
+
+/** Toggle a markup's lock (reversible flatten) — one undo step. Locking a
+ *  selected markup deselects it. */
+function toggleMarkupLock(id: string): void {
+  const doc = getActiveDoc();
+  const m = doc?.markups.find((mk) => mk.id === id);
+  if (!doc || !m) return;
+  const locking = !m.locked;
+  const next = doc.markups.map((mk) => (mk.id === id ? { ...mk, locked: locking } : mk));
+  import('../state/undo').then(({ applyMarkupChange }) =>
+    applyMarkupChange(locking ? 'Lock markup' : 'Unlock markup', next),
+  );
+  if (locking && getState().selectedMarkupIds.includes(id)) {
+    setState({ selectedMarkupIds: getState().selectedMarkupIds.filter((s) => s !== id) });
+  }
+}
+
 /** Drag a row up/down to reorder draw order, with a floating clone and a drop
- *  line. A plain click (no drag) selects the markup. */
-function wireMarkupRowDrag(li: HTMLElement, id: string, list: HTMLElement): void {
+ *  line. A plain click (no drag) selects the markup. Locked rows are inert —
+ *  a locked markup is "flattened" in place, so it can't be selected or
+ *  restacked until unlocked. */
+function wireMarkupRowDrag(li: HTMLElement, id: string, list: HTMLElement, locked = false): void {
   li.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || locked) return;
     const startY = e.clientY;
     let dragging = false;
     let clone: HTMLElement | null = null;

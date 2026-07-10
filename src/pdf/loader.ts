@@ -174,6 +174,26 @@ export async function flattenDocument(docId: string): Promise<void> {
   }));
 }
 
+/** Permanently bake ONE page's markups into the PDF; every other page keeps
+ *  its markups editable. */
+export async function flattenPage(docId: string, pageIndex: number): Promise<void> {
+  const doc = getState().documents.find((d) => d.id === docId);
+  if (!doc?.pdfBytes) return;
+  const pageMarkups = doc.markups.filter((m) => m.pageIndex === pageIndex);
+  if (!pageMarkups.length) return;
+  const { flattenPdf } = await import('./export');
+  // flattenPdf bakes exactly the markups it is given
+  const bytes = await flattenPdf({ ...doc, markups: pageMarkups });
+  const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  updateDoc(docId, (d) => ({
+    ...d,
+    pdfBytes: bytes,
+    pdfDoc,
+    markups: d.markups.filter((m) => m.pageIndex !== pageIndex),
+    dirty: true,
+  }));
+}
+
 function downloadBytes(bytes: Uint8Array, filename: string): void {
   const blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);

@@ -10,7 +10,7 @@ frosted-glass overlays, so the drawing shows through, blurred.
 
 ![The Markup Studio workspace](docs/graphics/workspace.png)
 
-1. **Menu bar** — File / Edit / View / Help, document tabs, filename chip, Save
+1. **Menu bar** — File / Edit / View / Markup / Help, document tabs, filename chip, Save
 2. **Canvas** — the sheet fills the window and scrolls under the glass chrome
 3. **Glass ribbon** — every tool plus the per-page defaults (see below)
 4. **Document rail** — page thumbnails and bookmarks
@@ -122,6 +122,13 @@ ribbon, and each one can be overridden afterwards in the inspector.
   the markup's text abbreviated to its first and last letters. Click to
   select; **drag rows to change the draw order**, guided by a glowing
   insertion line.
+- **Lock** — the padlock at the end of each row (or **Markup ▸ Lock All on
+  Current Page / in Current File**) reversibly "flattens" a markup: it stays
+  drawn in its draw-order slot but can't be selected, moved or edited until
+  unlocked.
+- **Flatten** — **Markup ▸ Flatten All on Current Page / in Current File**
+  permanently embeds markups into the PDF. They disappear from the markups
+  list and cannot be recovered, so a confirmation is asked first.
 - Full editing everywhere: undo/redo history, cut/copy/paste,
   paste-in-place, duplicate — every gesture is exactly one undo step.
 
@@ -131,8 +138,8 @@ ribbon, and each one can be overridden afterwards in the inspector.
 
 Saving writes the markups into the PDF itself — both as visible vector
 content and as recoverable metadata — so a saved file **reopens with every
-markup still editable**. Use **Edit → Flatten** to bake markups permanently
-into the page instead. Saving uses the File System Access API to write in
+markup still editable**. Use **Markup → Flatten All…** to bake markups
+permanently into the page instead. Saving uses the File System Access API to write in
 place (with Save As and download fallbacks). Images (JPG/PNG) open wrapped
 in a single PDF page.
 

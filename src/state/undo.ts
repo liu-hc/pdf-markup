@@ -42,6 +42,13 @@ export function canRedo(): boolean {
   return redoStack.length > 0;
 }
 
+/** Drop all history. Called after flatten: undoing past a flatten would
+ *  resurrect markups on top of the pixels already baked into the page. */
+export function clearHistory(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+}
+
 export function recordMarkupChange(label: string, before: Markup[], after: Markup[]): void {
   pushCommand({
     label,

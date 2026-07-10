@@ -74,6 +74,10 @@ export interface MarkupBase {
   type: MarkupType;
   pageIndex: number;
   description?: string;
+  /** Locked = reversibly "flattened": still drawn in its draw-order slot but
+   *  not selectable/editable until unlocked (markups-list padlock or
+   *  Markup ▸ Unlock). */
+  locked?: boolean;
   overrides?: AppearanceOverrides;
   arrowStart?: ArrowHead;
   arrowEnd?: ArrowHead;

@@ -89,7 +89,8 @@ export function hitTestMarkup(markup: Markup, p: Point, tolerance = HIT_TOLERANC
 }
 
 export function findMarkupAtPoint(markups: Markup[], pageIndex: number, p: Point): Markup | null {
-  const pageMarkups = markups.filter((m) => m.pageIndex === pageIndex).reverse();
+  // Locked markups behave as if flattened onto the page: clicks pass through
+  const pageMarkups = markups.filter((m) => m.pageIndex === pageIndex && !m.locked).reverse();
   for (const m of pageMarkups) {
     if (hitTestMarkup(m, p)) return m;
   }

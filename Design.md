@@ -60,7 +60,10 @@ second pane with its **own independent zoom**.
   any unsaved changes** first (Save / Don't Save / Cancel). A document is only
   considered unsaved if it was *edited* after its last save — navigation (zoom,
   scroll, page change, tool switch) never triggers the prompt.
-- **Edit ▸ Flatten** — bake markups permanently into the PDF.
+- **Markup menu** — Lock / Unlock All on the current page or in the whole
+  file (lock = reversible flatten: drawn in place, not editable), and
+  Flatten All on Current Page / in Current File (permanent, confirmed first).
+  Each markups-list row also has its own padlock toggle.
 - Multiple documents can be open at once, each as a tab.
 
 ---

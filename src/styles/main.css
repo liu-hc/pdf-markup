@@ -1445,6 +1445,50 @@ body.grabbing * {
 }
 .markups-list li.selected .mk-id { color: var(--text-2); }
 
+/* Padlock at the right end of each row: unlocked (subtle) ⇄ locked (accent) */
+.mk-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: -3px -4px -3px 0;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink-3);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity var(--t), color var(--t), background var(--t);
+}
+
+.markups-list li:hover .mk-lock { opacity: 1; }
+
+.mk-lock:hover {
+  background: rgba(29, 33, 80, 0.1);
+  color: var(--ink);
+}
+
+.mk-lock.locked {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.markups-list li.selected .mk-lock { color: var(--text-2); opacity: 1; }
+.markups-list li.selected .mk-lock:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+
+/* Locked rows read as inert: dimmed, no grab cursor */
+.markups-list li.mk-locked {
+  cursor: default;
+}
+.markups-list li.mk-locked .mk-name,
+.markups-list li.mk-locked .mk-id {
+  color: var(--ink-3);
+}
+.markups-list li.mk-locked .mk-dot { opacity: 0.5; }
+
 /* While dragging a row to reorder */
 .markups-list li.mk-dragging { opacity: 0.3; }
 
