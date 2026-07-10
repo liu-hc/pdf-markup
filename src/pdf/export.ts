@@ -15,6 +15,50 @@ const FONT_MAP: Record<string, StandardFonts> = {
 
 type FontCache = Map<StandardFonts, PDFFont>;
 
+/** Wrap text to `maxWidth` using the embedded font's metrics — same behavior
+ *  as the canvas renderer (word wrap, and words wider than a line are broken
+ *  mid-word). pdf-lib's drawText only breaks at \n, never wraps on its own. */
+function wrapPdfLines(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
+  const width = (s: string): number => font.widthOfTextAtSize(s, size);
+  const lines: string[] = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (let word of para.split(' ')) {
+      while (width(word) > maxWidth && word.length > 1) {
+        if (line && width(`${line} ${word[0]}`) > maxWidth) {
+          lines.push(line);
+          line = '';
+        }
+        const base = line ? `${line} ` : '';
+        let lo = 1;
+        let hi = word.length - 1;
+        let fit = 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (width(base + word.slice(0, mid)) <= maxWidth) {
+            fit = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        lines.push(base + word.slice(0, fit));
+        line = '';
+        word = word.slice(fit);
+      }
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && width(candidate) > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 async function getFont(pdf: PDFDocument, cache: FontCache, family?: string): Promise<PDFFont> {
   const std = FONT_MAP[family ?? 'Arial'] ?? StandardFonts.Helvetica;
   let font = cache.get(std);
@@ -132,10 +176,25 @@ async function embedMarkup(
       break;
     }
     case 'text': {
-      const font = await getFont(pdf, fonts, fontFamily);
-      page.drawText(markup.content, {
+      // Box (fill + border) matching the on-screen rendering
+      page.drawRectangle({
         x: markup.x,
         y: markup.y,
+        width: markup.width,
+        height: markup.height,
+        borderColor: stroke,
+        borderWidth: lineWeight,
+        color: fill ? parseColor(fill) : undefined,
+      });
+      const font = await getFont(pdf, fonts, fontFamily);
+      const pad = 3;
+      const lines = wrapPdfLines(font, markup.content, fontSize, Math.max(20, markup.width - pad * 2));
+      // drawText's y is the FIRST line's baseline — anchor the block at the
+      // box TOP so the text stays inside (it was anchored at the bottom and
+      // ran out of the box in saved/flattened output)
+      page.drawText(lines.join('\n'), {
+        x: markup.x + pad,
+        y: markup.y + markup.height - pad - fontSize * 0.85,
         size: fontSize,
         lineHeight: fontSize * lineSpacing,
         font,
@@ -178,10 +237,22 @@ async function embedMarkup(
         thickness: lineWeight,
         color: stroke,
       });
-      const calloutFont = await getFont(pdf, fonts, fontFamily);
-      page.drawText(markup.content, {
+      // Text box (cream default fill, like the canvas) + wrapped text
+      page.drawRectangle({
         x: markup.textX,
         y: markup.textY,
+        width: markup.textWidth,
+        height: markup.textHeight,
+        borderColor: stroke,
+        borderWidth: lineWeight,
+        color: fill ? parseColor(fill) : rgb(1, 0.996, 0.96),
+      });
+      const calloutFont = await getFont(pdf, fonts, fontFamily);
+      const pad = 4;
+      const lines = wrapPdfLines(calloutFont, markup.content, fontSize, Math.max(20, markup.textWidth - pad * 2));
+      page.drawText(lines.join('\n'), {
+        x: markup.textX + pad,
+        y: markup.textY + markup.textHeight - pad - fontSize * 0.85,
         size: fontSize,
         lineHeight: fontSize * lineSpacing,
         font: calloutFont,

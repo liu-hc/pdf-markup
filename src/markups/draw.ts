@@ -315,6 +315,11 @@ export function drawMarkupOnCanvas(
       // the text color, which only paints the glyphs)
       ctx.strokeRect(x, y, markup.width * scale, markup.height * scale);
       ctx.fillStyle = style.textColor;
+      // Clip so text can never spill outside the box
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, markup.width * scale, markup.height * scale);
+      ctx.clip();
       drawMultilineText(
         ctx,
         markup.content,
@@ -325,6 +330,7 @@ export function drawMarkupOnCanvas(
         style.fontFamily,
         style.lineSpacing,
       );
+      ctx.restore();
       break;
     }
     case 'callout': {
@@ -366,6 +372,11 @@ export function drawMarkupOnCanvas(
       ctx.fillRect(bx, by, bw, bh);
       ctx.strokeRect(bx, by, bw, bh);
       ctx.fillStyle = style.textColor;
+      // Clip so text can never spill outside the callout box
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(bx, by, bw, bh);
+      ctx.clip();
       drawMultilineText(
         ctx,
         markup.content,
@@ -376,6 +387,7 @@ export function drawMarkupOnCanvas(
         style.fontFamily,
         style.lineSpacing,
       );
+      ctx.restore();
       break;
     }
     case 'sticky': {
@@ -556,6 +568,50 @@ function drawCenteredLabel(
   ctx.restore();
 }
 
+/** Break text into lines that fit `maxWidth`: wraps between words, and words
+ *  wider than a whole line are broken mid-word so nothing can escape the box. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (let word of para.split(' ')) {
+      // A word wider than the whole line: emit fitting chunks of it
+      while (ctx.measureText(word).width > maxWidth && word.length > 1) {
+        if (line && ctx.measureText(`${line} ${word[0]}`).width > maxWidth) {
+          lines.push(line);
+          line = '';
+        }
+        const base = line ? `${line} ` : '';
+        // Largest prefix of the word that still fits on this line
+        let lo = 1;
+        let hi = word.length - 1;
+        let fit = 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (ctx.measureText(base + word.slice(0, mid)).width <= maxWidth) {
+            fit = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        lines.push(base + word.slice(0, fit));
+        line = '';
+        word = word.slice(fit);
+      }
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 /** Word-wrapped multiline text, top-anchored at (x, y). */
 function drawMultilineText(
   ctx: CanvasRenderingContext2D,
@@ -572,21 +628,29 @@ function drawMultilineText(
   ctx.textAlign = 'left';
   const lineHeight = fontSize * lineSpacing;
   let cy = y;
-  for (const para of text.split('\n')) {
-    let line = '';
-    for (const word of para.split(' ')) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && ctx.measureText(candidate).width > maxWidth) {
-        ctx.fillText(line, x, cy);
-        cy += lineHeight;
-        line = word;
-      } else {
-        line = candidate;
-      }
-    }
+  for (const line of wrapLines(ctx, text, maxWidth)) {
     ctx.fillText(line, x, cy);
     cy += lineHeight;
   }
+}
+
+let _measureCtx: CanvasRenderingContext2D | null = null;
+
+/** Height the wrapped text needs at the given width — same wrap logic as the
+ *  canvas renderer, so text/callout boxes can auto-grow to fit on commit.
+ *  All values in page units (pt). */
+export function measureTextBlockHeight(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  fontFamily = 'Arial',
+  lineSpacing = 1.35,
+): number {
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  if (!_measureCtx) return fontSize * lineSpacing;
+  _measureCtx.font = canvasFont(fontSize, fontFamily);
+  const lines = wrapLines(_measureCtx, text, Math.max(20, maxWidth));
+  return lines.length * fontSize * lineSpacing;
 }
 
 function drawLabel(

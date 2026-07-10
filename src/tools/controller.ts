@@ -20,6 +20,7 @@ import type {
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
 import { findMarkupAtPoint, cloneMarkup } from '../markups/hitTest';
+import { measureTextBlockHeight } from '../markups/draw';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
 import { ensureTextBoxes, getTextBoxesSync, type TextBox } from '../pdf/textLayer';
@@ -189,13 +190,18 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
 
     const hit = findMarkupAtPoint(doc.markups, pv.pageIndex, p);
 
-    // 2) Double-click a text-bearing markup → edit its text inline
-    if (hit && e.detail === 2 && (hit.type === 'text' || hit.type === 'callout' || hit.type === 'sticky')) {
+    // 2) Double-click a text-bearing markup → edit its text inline.
+    //    isDoubleClick (manual timer), NOT e.detail: preventDefault() on the
+    //    first pointerdown stops the browser's click counter from advancing.
+    if (hit && isDoubleClick(e) && (hit.type === 'text' || hit.type === 'callout' || hit.type === 'sticky')) {
+      lastPolyClick = { time: 0, x: 0, y: 0 }; // consume the click pair
       selectMarkups([hit.id]);
       openEditorForExisting(pv, hit);
       e.preventDefault();
       return;
     }
+    // Arm the double-click detector for the next click
+    recordClick(e);
 
     selectMarkups(hit ? [hit.id] : []);
     ws.redrawAllMarkups();
@@ -1461,6 +1467,7 @@ function spawnTextEditor(opts: {
 function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: TextMarkup): void {
   const scale = pv.getScale();
   const ph = pv.getPageHeight();
+  const font = editorFont(pageIndex, existing);
   spawnTextEditor({
     pv,
     leftPx: (existing ? existing.x : at.x) * scale,
@@ -1468,10 +1475,13 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
     widthPx: existing ? existing.width * scale : undefined,
     heightPx: existing ? existing.height * scale : undefined,
     initial: existing?.content ?? '',
-    font: editorFont(pageIndex, existing),
+    font,
     onCommit: (text, wPx, hPx) => {
       const w = wPx / scale;
-      const h = hPx / scale;
+      // Grow the box to fit the wrapped text (the canvas clips to the box, so
+      // a too-short box would otherwise swallow the overflow)
+      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, font.spacing);
+      const h = Math.max(hPx / scale, contentH + 8);
       if (existing) {
         applyMarkupChange(
           'Edit text',
@@ -1526,6 +1536,7 @@ function openCalloutEditor(
     false,
     previewColor(pageIndex),
   );
+  const font = editorFont(pageIndex, existing);
   spawnTextEditor({
     pv,
     leftPx: (existing ? existing.textX : textAt.x) * scale,
@@ -1533,11 +1544,13 @@ function openCalloutEditor(
     widthPx: existing ? existing.textWidth * scale : undefined,
     heightPx: existing ? existing.textHeight * scale : undefined,
     initial: existing?.content ?? '',
-    font: editorFont(pageIndex, existing),
+    font,
     onCommit: (text, wPx, hPx) => {
       pv.clearSvg();
       const w = wPx / scale;
-      const h = hPx / scale;
+      // Grow the box to fit the wrapped text (the canvas clips to the box)
+      const contentH = measureTextBlockHeight(text, w - 8, font.size, font.family, font.spacing);
+      const h = Math.max(hPx / scale, contentH + 10);
       if (existing) {
         applyMarkupChange(
           'Edit callout',
