@@ -183,7 +183,10 @@ export function parseArchScale(label: string): number | null {
 export function parseEngScale(label: string): number | null {
   const m = label.match(/^1"\s*=\s*([\d]+)'$/);
   if (!m) return null;
-  return Number(m[1]);
+  // The scale factor is real-world INCHES per paper inch (parseArchScale
+  // returns 48 for 1/4"=1'-0"). 1" = N' means N feet = N*12 inches per inch —
+  // returning bare feet made every engineer scale read 12× short.
+  return Number(m[1]) * 12;
 }
 
 export function parseFractionInches(s: string): number | null {

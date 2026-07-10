@@ -25,8 +25,8 @@ import guideMeasure from '../../docs/graphics/measure.svg';
 import guideOrganize from '../../docs/graphics/organize.svg';
 import guideDocuments from '../../docs/graphics/documents.svg';
 import guideAdvanced from '../../docs/graphics/advanced.svg';
-import { formatLength, formatArea } from '../util/units';
-import { polygonArea, polylineLength, dist } from '../util/geometry';
+import { formatLength, formatArea, formatAngle } from '../util/units';
+import { polygonArea, polylineLength, dist, angleDegrees } from '../util/geometry';
 import type { Workspace } from '../view/Workspace';
 
 /* ── Tool icon library ─────────────────────────────────────────────────── */
@@ -1225,10 +1225,30 @@ function renderRightPanel(root: HTMLElement): void {
     name.textContent = m.type;
     const idSpan = document.createElement('span');
     idSpan.className = 'mk-id';
-    const info = ('content' in m && m.content ? m.content : (m.description ?? m.id.slice(0, 6)))
-      .replace(/\s+/g, ' ')
-      .trim();
-    idSpan.textContent = info.length > 5 ? `${info.slice(0, 2)}…${info.slice(-2)}` : info;
+    // Right-hand info: the measurement value for measure markups, the text
+    // content for text-bearing ones, and the id ONLY when neither exists.
+    // Measurement values show in full; text/ids abbreviate to "abcd…wxyz".
+    const sf = doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null;
+    let info = '';
+    let isValue = false;
+    if (m.type === 'dimension') {
+      info = formatLength(dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }), sf, m.roundTo);
+      isValue = true;
+    } else if (m.type === 'polyline') {
+      info = formatLength(polylineLength(m.points), sf);
+      isValue = true;
+    } else if (m.type === 'polygon' && m.points.length >= 3) {
+      info = formatArea(polygonArea(m.points), sf, m.decimals);
+      isValue = true;
+    } else if (m.type === 'measureAngle') {
+      info = formatAngle(angleDegrees(m.p1, m.vertex, m.p2));
+      isValue = true;
+    } else if ('content' in m && m.content) {
+      info = m.content;
+    }
+    if (!info) info = m.description ?? m.id;
+    info = info.replace(/\s+/g, ' ').trim();
+    idSpan.textContent = !isValue && info.length > 9 ? `${info.slice(0, 4)}…${info.slice(-4)}` : info;
     idSpan.title = info;
     // Padlock: unlocked by default; click to lock (= reversible flatten —
     // drawn in place but not selectable/editable until unlocked)
