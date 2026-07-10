@@ -1,7 +1,11 @@
 import './styles/main.css';
+import { ensureAccess } from './ui/PassGate';
 import { Workspace } from './view/Workspace';
 import { buildAppShell } from './ui/AppShell';
 import { setupKeyboardShortcuts } from './tools/controller';
+
+// The passcode gate resolves before any of the app UI is built
+await ensureAccess();
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const workspace = new Workspace();

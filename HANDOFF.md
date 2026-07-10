@@ -20,6 +20,14 @@ npm run dev
 Open the printed URL in Chrome/Edge (use the dev server URL, not `file://`).
 `npm run build` passes (tsc + vite).
 
+## Access gate
+`src/ui/PassGate.ts` shows a passcode screen before the app boots (awaited at
+the top of `main.ts`). One shared code, compared as a SHA-256 hash (plaintext
+is not in the source or bundle); success is remembered in localStorage under
+`markup-studio-access`. Client-side only — a deterrent for link-sharing, not
+real security. For a server-enforced gate after the Vercel deploy, swap in
+Vercel Edge Middleware checking a cookie against an env var.
+
 ## Source layout
 - `src/state/` — store, types, undo
 - `src/pdf/` — loader, render, export, importMarkups, textLayer

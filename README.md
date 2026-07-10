@@ -24,6 +24,20 @@ new markups) on the right:
 
 ![The toolbar](docs/graphics/toolbar.png)
 
+## Access
+
+The app opens with a passcode screen — a single shared code for the people
+you share the link with. Entry is remembered per browser (localStorage), so
+it's only asked once. The code lives in `src/ui/PassGate.ts` as a SHA-256
+hash; to change it, hash the new code and replace `PASS_HASH`:
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('NEW-CODE').digest('hex'))"
+```
+
+> This is a client-side gate for casual link-sharing, not real security —
+> don't rely on it to protect sensitive documents.
+
 ## Quick start
 
 ```bash
