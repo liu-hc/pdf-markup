@@ -15,6 +15,16 @@ import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocument, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
 import { parseArchScale, parseEngScale } from '../util/geometry';
+// User-guide illustrations (shared with the README)
+import guideWorkspace from '../../docs/graphics/workspace.png';
+import guideToolbar from '../../docs/graphics/toolbar.png';
+import guideNavigate from '../../docs/graphics/navigate.svg';
+import guideShapes from '../../docs/graphics/shapes.svg';
+import guideAnnotate from '../../docs/graphics/annotate.svg';
+import guideMeasure from '../../docs/graphics/measure.svg';
+import guideOrganize from '../../docs/graphics/organize.svg';
+import guideDocuments from '../../docs/graphics/documents.svg';
+import guideAdvanced from '../../docs/graphics/advanced.svg';
 import { formatLength, formatArea } from '../util/units';
 import { polygonArea, polylineLength, dist } from '../util/geometry';
 import type { Workspace } from '../view/Workspace';
@@ -332,62 +342,110 @@ function showNewFileDialog(): void {
   });
 }
 
-const HELP_SECTIONS: { title: string; items: [string, string][] }[] = [
-  {
-    title: 'Navigate',
-    items: [
-      ['Flip', 'Page through the document; scroll wheel turns pages.'],
-      ['Zoom Page', 'Scroll to zoom; middle-drag (or Alt-drag) to pan. Double middle-click = 100%.'],
-      ['Select', 'Click a markup to select, drag to move, drag handles to resize. Drag the corner-outside handles to rotate a rectangle/ellipse.'],
-    ],
-  },
-  {
-    title: 'Shapes',
-    items: [
-      ['Rectangle / Ellipse', 'Click two opposite corners. Add infill, rotation, line weight & style in Properties.'],
-      ['Polygon', 'Click each vertex; double-click or click the start point to close. Toggle "Show area" in Properties.'],
-      ['Line', 'Click two points. Hold Shift for horizontal/vertical. Add start/end arrows in Properties.'],
-      ['Polyline', 'Click each vertex, double-click to finish. Toggle "Total length" in Properties.'],
-      ['Highlighter', 'Drag to free-draw a fat marker; over text the cursor becomes an I-beam to highlight a text run.'],
-    ],
-  },
-  {
-    title: 'Annotation',
-    items: [
-      ['Text', 'Click two corners to size a box, then type in place.'],
-      ['Callout', 'Three clicks — arrow tip, elbow, then the text box — then type. The leader runs horizontally out of the box.'],
-    ],
-  },
-  {
-    title: 'Measure',
-    items: [
-      ['Calibrate', 'Draw a line over a known length and enter the real-world distance to set the page Scale.'],
-      ['Dimension', 'Click two points to dimension a length; the third click pulls the dimension line to an offset.'],
-      ['Angle', 'Click three points to measure an angle.'],
-    ],
-  },
-  {
-    title: 'Page tools',
-    items: [
-      ['Overlay', 'Composite up to two other pages over the current one (with optional Multiply blend).'],
-      ['Snip', 'Drag a region to copy it to the clipboard; paste places it with its lower-left at the cursor.'],
-      ['Page Default bar', 'Sets the scale, colors, line weight/style and text size applied to new markups on the current page.'],
-    ],
-  },
-];
-
+/** The full illustrated user guide (mirrors the README). */
 function showHelpDialog(): void {
+  const fig = (src: string, alt: string): string =>
+    `<figure class="help-fig"><img src="${src}" alt="${alt}"></figure>`;
+
   const body = `
-    <p class="help-intro">Markup Studio is a browser PDF viewer &amp; markup tool. Open or create a PDF, pick a tool from the ribbon, and draw on the page. Selected markups are edited in the Properties panel on the right; measurement totals appear below it. Use File ▸ Save to write your markups back into the PDF.</p>
-    ${HELP_SECTIONS.map(
-      (s) => `<div class="help-section"><h4>${s.title}</h4>${s.items
-        .map(([name, desc]) => `<p><strong>${name}</strong> — ${desc}</p>`)
-        .join('')}</div>`,
-    ).join('')}
-    <div class="help-section"><h4>Shortcuts</h4>
-      <p>Ctrl/⌘ Z undo · Shift+Z redo · Ctrl/⌘ S save · Ctrl/⌘ C/V copy/paste · Delete removes · Esc cancels a draw or clears the selection.</p>
+    <p class="help-intro">Markup Studio is a browser PDF viewer &amp; markup tool for architectural and engineering drawings. Open or create a PDF, pick a tool from the glass ribbon, and draw on the sheet — then File ▸ Save writes the markups back into the PDF. Everything runs locally: your drawings never leave your machine.</p>
+
+    <div class="help-section"><h4>The workspace</h4>
+      ${fig(guideWorkspace, 'The Markup Studio workspace')}
+      <ol class="help-legend">
+        <li><strong>Menu bar</strong> — File / Edit / View / Help, document tabs, filename chip, Save</li>
+        <li><strong>Canvas</strong> — the sheet fills the window and scrolls under the glass chrome</li>
+        <li><strong>Glass ribbon</strong> — every tool plus the per-page defaults</li>
+        <li><strong>Document rail</strong> — page thumbnails and bookmarks</li>
+        <li><strong>Inspector</strong> — properties of the selected markup, totals, markups list</li>
+        <li><strong>Canvas HUD</strong> — scale chip · page navigation · fit / zoom</li>
+        <li><strong>Status bar</strong> — active tool, calibration, cursor position, markup count, sheet size</li>
+      </ol>
+      <p>The toolbar up close — tool groups on the left; page defaults (text size, line weight, line style, scale, and the Line / Fill / Text colors applied to new markups) on the right:</p>
+      ${fig(guideToolbar, 'The toolbar')}
+    </div>
+
+    <div class="help-section"><h4>Navigate</h4>
+      ${fig(guideNavigate, 'Navigation tools: Flip, Pan, Zoom, Select')}
+      <ul>
+        <li><strong>Flip (F)</strong> pages through the set — the scroll wheel turns pages.</li>
+        <li><strong>Pan (H)</strong> grabs the sheet; middle-drag (or Alt-drag) pans on <em>any</em> tool.</li>
+        <li><strong>Zoom Page (Z)</strong> zooms with the wheel at the cursor; a double middle-click snaps back to 100%.</li>
+        <li><strong>Select</strong> is the editing tool: click a markup to select it, drag its body to move, drag the 8 handles to resize, and drag the corner-outside handles to rotate rectangles and ellipses. Double-click text markups to edit them.</li>
+      </ul>
+      <p>After you finish drawing a markup, the app automatically returns to the last navigation tool you used.</p>
+    </div>
+
+    <div class="help-section"><h4>Shapes</h4>
+      ${fig(guideShapes, 'Shape tools: rectangle, ellipse, polygon, revision cloud, line, polyline, highlighter')}
+      <ul>
+        <li><strong>Rectangle (R) / Ellipse (O)</strong> — two clicks place opposite corners, with live preview. Both support infill, rotation, and line weight/style.</li>
+        <li><strong>Polygon (Shift+P)</strong> — click each vertex; double-click or click the start point to close. Toggle a centered <strong>area label</strong> in the inspector.</li>
+        <li><strong>Revision cloud</strong> — hold Shift when closing a polygon to turn its edges into arc scallops.</li>
+        <li><strong>Line (L) / Polyline (P)</strong> — Shift locks segments orthogonal. Start/end arrowheads are 1:1 triangles adjustable from 25% to 800% of line weight.</li>
+        <li><strong>Highlighter</strong> — over PDF text it snaps line-by-line to the text run; over blank drawing areas it free-draws a fat translucent marker.</li>
+      </ul>
+      <p>All shapes pick up the page defaults (color, weight, line style) from the ribbon, and each one can be overridden afterwards in the inspector.</p>
+    </div>
+
+    <div class="help-section"><h4>Annotate</h4>
+      ${fig(guideAnnotate, 'Annotation tools: text box, callout, sticky note')}
+      <ul>
+        <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
+        <li><strong>Callout (Q)</strong> — three clicks: arrow tip → leader elbow → text box, then type. The leader always exits the box horizontally and bends at the elbow, which has its own drag handle.</li>
+        <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
+      </ul>
+    </div>
+
+    <div class="help-section"><h4>Measure</h4>
+      ${fig(guideMeasure, 'Measurement tools: calibrate, dimension, angle')}
+      <ul>
+        <li><strong>Calibrate</strong> — click two points across a known distance and type its real-world length; this sets the page <strong>scale</strong>. You can also pick a preset (architectural <code>1/4" = 1'-0"</code> … or engineering <code>1" = 100'</code>) in the ribbon.</li>
+        <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
+        <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
+        <li>Per-page <strong>Totals</strong> (linear, polyline, area) accumulate in the inspector.</li>
+      </ul>
+    </div>
+
+    <div class="help-section"><h4>Properties &amp; organizing</h4>
+      ${fig(guideOrganize, 'Inspector: per-markup properties, markups list with drag reordering, editing shortcuts')}
+      <ul>
+        <li>Selecting a markup opens its properties: <strong>Line / Infill / Text colors</strong> (each overriding the page defaults independently), weight, line style, opacity, rotation, arrows, fonts, and measurement options.</li>
+        <li>The <strong>Markups list</strong> shows every markup on the page — color dot, type, and the markup's text abbreviated to its first and last letters. Click to select; <strong>drag rows to change the draw order</strong>, guided by a glowing insertion line.</li>
+        <li>Full editing everywhere: undo/redo history, cut/copy/paste, paste-in-place, duplicate — every gesture is exactly one undo step.</li>
+      </ul>
+    </div>
+
+    <div class="help-section"><h4>Documents: open → save → reopen</h4>
+      ${fig(guideDocuments, 'Document lifecycle: open, mark up, save, reopen editable, or flatten')}
+      <p>Saving writes the markups into the PDF itself — both as visible vector content and as recoverable metadata — so a saved file <strong>reopens with every markup still editable</strong>. Use <strong>Edit ▸ Flatten</strong> to bake markups permanently into the page instead. Saving writes in place where the browser allows it (with Save As and download fallbacks). Images (JPG/PNG) open wrapped in a single PDF page.</p>
+    </div>
+
+    <div class="help-section"><h4>Advanced</h4>
+      ${fig(guideAdvanced, 'Advanced: split view, page overlay, snip')}
+      <ul>
+        <li><strong>Split view</strong> — duplicate the active page in a second pane (vertical or horizontal) with its own independent zoom; drag the divider to resize.</li>
+        <li><strong>Overlay</strong> — composite up to two other pages over the current one with per-slot opacity and an optional Photoshop-style Multiply blend — ideal for comparing revisions.</li>
+        <li><strong>Snip (S)</strong> — drag a region to copy that patch of page <em>plus its markups</em> to the clipboard; Ctrl+V pastes it at the cursor.</li>
+        <li>Right-click a thumbnail to <strong>insert blank pages</strong> (Letter → ARCH E) or <strong>rotate</strong> a page.</li>
+      </ul>
+    </div>
+
+    <div class="help-section"><h4>Keyboard shortcuts</h4>
+      <table class="help-keys">
+        <tr><td><code>F</code> <code>H</code> <code>Z</code></td><td>Flip / Pan / Zoom Page</td></tr>
+        <tr><td><code>R</code> <code>O</code> <code>Shift+P</code> <code>L</code> <code>P</code></td><td>Rectangle / Ellipse / Polygon / Line / Polyline</td></tr>
+        <tr><td><code>T</code> <code>Q</code> <code>D</code> <code>S</code></td><td>Text / Callout / Dimension / Snip</td></tr>
+        <tr><td><code>Ctrl/⌘ S</code></td><td>Save</td></tr>
+        <tr><td><code>Ctrl/⌘ Z</code> · <code>Shift+Z</code> / <code>Ctrl+Y</code></td><td>Undo · Redo</td></tr>
+        <tr><td><code>Ctrl/⌘ X · C · V</code></td><td>Cut · Copy · Paste</td></tr>
+        <tr><td><code>Ctrl/⌘ Shift V</code></td><td>Paste in place</td></tr>
+        <tr><td><code>Enter</code> / <code>Esc</code></td><td>Finish / cancel an in-progress shape</td></tr>
+        <tr><td><code>Delete</code></td><td>Remove selection</td></tr>
+        <tr><td><code>Shift</code> (while drawing)</td><td>Lock orthogonal / revision cloud on close</td></tr>
+      </table>
     </div>`;
-  openModal('User guide', body, 560);
+  openModal('User guide', body, 720);
 }
 
 function wireRibbon(root: HTMLElement): void {

@@ -1678,17 +1678,66 @@ body.grabbing * {
 }
 .modal-btn-ghost:hover { color: var(--text); border-color: var(--text-3); }
 
-.help-intro { margin: 0 0 14px; }
-.help-section { margin-bottom: 12px; }
+.help-intro { margin: 0 0 16px; line-height: 1.55; }
+.help-section { margin-bottom: 22px; }
 .help-section h4 {
-  margin: 0 0 5px;
+  margin: 0 0 6px;
   color: var(--text);
   font-size: var(--font-xs);
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
-.help-section p { margin: 0 0 5px; line-height: 1.45; }
+.help-section p { margin: 8px 0 5px; line-height: 1.5; }
 .help-section strong { color: var(--text); }
+
+/* Guide illustrations — light cards on the dark glass dialog */
+.help-fig {
+  margin: 8px 0;
+}
+.help-fig img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Numbered workspace legend */
+.help-legend {
+  margin: 8px 0 0;
+  padding-left: 22px;
+}
+.help-legend li { margin: 3px 0; line-height: 1.5; }
+
+.help-section ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.help-section ul li { margin: 4px 0; line-height: 1.5; }
+
+.help-section code {
+  background: rgba(11, 14, 36, 0.5);
+  border: 1px solid var(--chrome-border-2);
+  border-radius: 5px;
+  padding: 0 5px;
+  font-size: var(--font-xs);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Shortcuts table */
+.help-keys {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+.help-keys td {
+  padding: 5px 10px 5px 0;
+  border-top: 1px solid var(--chrome-border);
+  vertical-align: top;
+  line-height: 1.5;
+}
+.help-keys tr:first-child td { border-top: none; }
 
 /* ── Passcode gate ─────────────────────────────────────────────────────── */
 .pass-gate {
