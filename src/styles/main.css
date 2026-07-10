@@ -1013,9 +1013,12 @@ input, select, textarea, button {
   border-radius: 2px;
 }
 
+/* The page element carries an explicit layout size (page pt × zoom) set by
+   PageView.setLayout; every canvas layer is absolutely positioned within it.
+   Bitmap resolutions are decoupled from CSS size (capped base + crisp
+   visible-region detail), so layers may be CSS-stretched at deep zoom. */
 .page-view    { position: relative; }
 .page-layer   { position: absolute; top: 0; left: 0; }
-.pdf-layer    { position: relative; }
 
 /* In-place text editor for Text / Callout / Sticky tools */
 .inline-text-editor {

@@ -8,22 +8,30 @@ import {
 } from '../state/store';
 import { handlePointerDown, handlePointerMove, handlePointerUp, handleWheel, handleContextMenu } from '../tools/controller';
 
-/** Pages pre-rendered on each side of the current page. */
+/** Pages pre-rendered on each side of the current page (fit-level zoom only). */
 const PREFETCH_RADIUS = 2;
+/** Prefetching neighbours is skipped above this zoom — at detail zoom the
+ *  user is studying one sheet, and CAD pages are too expensive to speculate. */
+const PREFETCH_MAX_ZOOM = 1.5;
 /** Pages beyond this distance from current are evicted to free memory. */
 const EVICT_RADIUS = 8;
 /** Virtual page buffer for continuous-mode scroll. */
 const BUFFER = 2;
 /** Pan slack around pages — must match .workspace-content padding in main.css. */
 const CONTENT_PAD = 160;
+/** Idle time after the last zoom step before the expensive crisp render. */
+const ZOOM_SETTLE_MS = 200;
+/** Idle time after the last page flip before rendering (prefetched pages hit
+ *  the bitmap cache and appear instantly regardless). */
+const PAGE_SETTLE_MS = 60;
+/** Idle time after scrolling before the visible-region detail re-render. */
+const SCROLL_SETTLE_MS = 160;
 
 export class Workspace {
   readonly el: HTMLDivElement;
   readonly scrollEl: HTMLDivElement;
   readonly contentEl: HTMLDivElement;
   private pageViews = new Map<number, PageView>();
-  /** Set of page indices rendered at the current zoom level. */
-  private mounted = new Set<number>();
   private unsub: (() => void) | null = null;
   private _lastDocId: string | null = null;
   /** The pdfDoc proxy last rendered — page insert/delete/rotate/paste replace
@@ -39,6 +47,14 @@ export class Workspace {
   private _independentZoom = false;
   /** This viewer's zoom when `_independentZoom` is set. */
   private _zoom = 1;
+  /** Timers for the debounced crisp / detail / prefetch passes. */
+  private _crispTimer: number | null = null;
+  private _detailTimer: number | null = null;
+  private _prefetchTimer: number | null = null;
+  /** True between a zoom/page change and its settled crisp render — cheap
+   *  CSS-stretched frames only, no expensive rasterizing. */
+  private _settling = false;
+  private _scrollRaf: number | null = null;
 
   constructor(independentZoom = false) {
     this._independentZoom = independentZoom;
@@ -103,6 +119,16 @@ export class Workspace {
   destroy(): void {
     this.unsub?.();
     if (this._rafId !== null) cancelAnimationFrame(this._rafId);
+    this._clearTimers();
+  }
+
+  private _clearTimers(): void {
+    if (this._crispTimer !== null) clearTimeout(this._crispTimer);
+    if (this._detailTimer !== null) clearTimeout(this._detailTimer);
+    if (this._prefetchTimer !== null) clearTimeout(this._prefetchTimer);
+    this._crispTimer = null;
+    this._detailTimer = null;
+    this._prefetchTimer = null;
   }
 
   /** Detach from the DOM and stop reacting to state (used by the split pane's
@@ -114,6 +140,7 @@ export class Workspace {
       cancelAnimationFrame(this._rafId);
       this._rafId = null;
     }
+    this._clearTimers();
     this._evictAll();
     this._lastDocId = null;
     this._lastZoom = 0;
@@ -132,6 +159,7 @@ export class Workspace {
 
   getPageViewAt(clientX: number, clientY: number): PageView | null {
     for (const pv of this.pageViews.values()) {
+      if (!pv.el.isConnected) continue;
       const rect = pv.el.getBoundingClientRect();
       if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
         return pv;
@@ -168,28 +196,26 @@ export class Workspace {
       this._lastPdfDoc = doc.pdfDoc;
     }
 
-    // Zoom changed — all cached renders are at the wrong scale
     const zoom = this.getZoom();
-    if (zoom !== this._lastZoom && this._lastZoom !== 0) {
-      this.mounted.clear();
-    }
+    const zoomChanged = this._lastZoom !== 0 && zoom !== this._lastZoom;
     this._lastZoom = zoom;
 
     this.hideEmptyState();
 
     if (doc.viewMode === 'single') {
-      await this.renderSinglePage(doc.currentPage, zoom);
+      this.layoutSinglePage(zoomChanged);
     } else {
-      this.rebuildContinuousLayout();
-      this.onScroll();
+      this.layoutContinuous(zoomChanged);
     }
 
+    this.updateRegions();
     this.syncOverlays();
     this.redrawAllMarkups();
 
     if (this._centerNext) {
       this._centerNext = false;
       this.centerScroll();
+      this.updateRegions();
     }
   }
 
@@ -207,117 +233,157 @@ export class Workspace {
     }
   }
 
-  /** Apply the Overlay bar state: composite the chosen pages onto the current
-   *  page's overlay canvas, and clear overlays everywhere else. */
-  private syncOverlays(): void {
+  /** Apply the current zoom to every mounted page synchronously (CSS only) —
+   *  called from setZoom so scroll compensation sees the new content size. */
+  applyLayoutNow(): void {
     const doc = getActiveDoc();
-    if (!doc?.pdfDoc) return;
-    const key = [
-      doc.id,
-      doc.currentPage,
-      this.getZoom(),
-      doc.overlayEnabled,
-      doc.overlayMultiply,
-      JSON.stringify(doc.overlays),
-    ].join('|');
-    if (key === this._lastOverlayKey) return;
-    this._lastOverlayKey = key;
+    if (!doc) return;
+    const zoom = this.getZoom();
     for (const [i, pv] of this.pageViews) {
-      if (doc.overlayEnabled && i === doc.currentPage) {
-        void pv.renderOverlays(doc.pdfDoc, doc.overlays, doc.overlayMultiply);
-      } else {
-        pv.clearOverlays();
-      }
+      const info = doc.pages[i];
+      if (info && pv.el.isConnected) pv.setLayout(info.width, info.height, zoom);
     }
   }
 
   // ─── Single-page mode ─────────────────────────────────────────────────────
 
-  private async renderSinglePage(pageIndex: number, zoom: number): Promise<void> {
+  private layoutSinglePage(zoomChanged: boolean): void {
     const doc = getActiveDoc();
     if (!doc?.pdfDoc) return;
+    const pageIndex = doc.currentPage;
+    const info = doc.pages[pageIndex];
+    if (!info) return;
 
-    // Ensure a PageView object exists so we can mount it immediately
     let pv = this.pageViews.get(pageIndex);
     if (!pv) {
       pv = new PageView(pageIndex);
       this.pageViews.set(pageIndex, pv);
     }
+    pv.setLayout(info.width, info.height, this.getZoom());
 
-    // Mount pv.el into the DOM BEFORE the async render so that
-    // getPageViewAt() always resolves and tools remain responsive
-    // throughout (the PDF canvas fills in asynchronously).
-    const existingWrapper = this.contentEl.querySelector('.page-wrapper.single');
-    const displayedIndex = existingWrapper
-      ? Number((existingWrapper.querySelector('[data-page]') as HTMLElement | null)?.dataset.page ?? -1)
+    const wrapper = this.contentEl.querySelector('.page-wrapper.single');
+    const displayedIndex = wrapper
+      ? Number((wrapper.querySelector('.page-view') as HTMLElement | null)?.dataset.page ?? -1)
       : -1;
 
     if (displayedIndex !== pageIndex) {
-      this.contentEl.innerHTML = '';
-      const wrapper = document.createElement('div');
-      wrapper.className = 'page-wrapper single';
-      wrapper.appendChild(pv.el);
-      this.contentEl.appendChild(wrapper);
+      if (pv.hasBase() || displayedIndex === -1) {
+        // Swap immediately — the new page already has pixels (prefetched) or
+        // there is nothing on screen yet
+        this.mountSingleWrapper(pv);
+      }
+      // else: keep the previous page visible; the crisp pass swaps when the
+      // new page's base render lands
+      this.scheduleCrisp(PAGE_SETTLE_MS);
+      return;
     }
 
-    // Render the PDF canvas (no-op if already cached at this zoom)
-    if (!this.mounted.has(pageIndex)) {
-      const page = await doc.pdfDoc.getPage(pageIndex + 1);
-      await pv.renderPdf(page, zoom);
-      this.mounted.add(pageIndex);
+    if (!pv.hasBase()) {
+      this.scheduleCrisp(0);
+    } else if (zoomChanged) {
+      this.scheduleCrisp(ZOOM_SETTLE_MS);
     }
-
-    // Pre-render adjacent pages in the background (don't block the current page)
-    void this.prefetchAdjacent(pageIndex, zoom);
-
-    // Free memory for pages far outside the prefetch window
-    this.evictDistantPages(pageIndex, EVICT_RADIUS);
   }
 
-  private async prefetchAdjacent(center: number, zoom: number): Promise<void> {
+  private mountSingleWrapper(pv: PageView): void {
+    this.contentEl.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'page-wrapper single';
+    wrapper.appendChild(pv.el);
+    this.contentEl.appendChild(wrapper);
+  }
+
+  /** The expensive pass: rasterize the current page (base + visible-region
+   *  detail) and the overlays, once zooming/flipping has settled. */
+  private scheduleCrisp(delay: number): void {
+    this._settling = true;
+    if (this._crispTimer !== null) clearTimeout(this._crispTimer);
+    this._crispTimer = window.setTimeout(() => {
+      this._crispTimer = null;
+      void this.crispPass();
+    }, delay);
+  }
+
+  private async crispPass(): Promise<void> {
     const doc = getActiveDoc();
     if (!doc?.pdfDoc) return;
-    // Render nearest neighbours first (delta 1, then 2)
-    for (let delta = 1; delta <= PREFETCH_RADIUS; delta++) {
-      for (const sign of [-1, 1]) {
-        const i = center + sign * delta;
-        if (i < 0 || i >= doc.pageCount) continue;
-        if (!this.mounted.has(i)) {
-          await this.renderOffscreen(i, zoom);
+    const zoom = this.getZoom();
+    const targets =
+      doc.viewMode === 'single' ? [doc.currentPage] : this.visiblePages();
+
+    // Stop stale renders of pages we are not looking at
+    for (const [i, pv] of this.pageViews) {
+      if (!targets.includes(i)) pv.cancelRenders();
+    }
+
+    for (const pageIndex of targets) {
+      const info = doc.pages[pageIndex];
+      if (!info) continue;
+      let pv = this.pageViews.get(pageIndex);
+      if (!pv) {
+        pv = new PageView(pageIndex);
+        this.pageViews.set(pageIndex, pv);
+      }
+      pv.setLayout(info.width, info.height, zoom);
+      const page = await doc.pdfDoc.getPage(pageIndex + 1);
+      const ok = await pv.renderBase(page);
+      if (!ok) return; // superseded — a newer pass owns the screen
+
+      // Single mode: if this page was waiting off-screen (page flip), swap it
+      // in now that it has pixels
+      if (doc.viewMode === 'single') {
+        const shown = this.contentEl.querySelector('.page-wrapper.single .page-view') as HTMLElement | null;
+        if (Number(shown?.dataset.page ?? -1) !== pageIndex) {
+          this.mountSingleWrapper(pv);
+          if (this._centerNext) {
+            this._centerNext = false;
+            this.centerScroll();
+          }
         }
       }
+      this.updateRegions();
+      this.redrawPageMarkups(pageIndex);
+      void pv.renderDetail();
     }
+
+    this._settling = false;
+    this.syncOverlays(true);
+    this.schedulePrefetch();
+    const current = getActiveDoc();
+    if (current) this.evictDistantPages(current.currentPage, EVICT_RADIUS);
   }
 
-  /** Render a page into its canvas without placing it in the DOM. */
-  private async renderOffscreen(pageIndex: number, zoom: number): Promise<void> {
-    const doc = getActiveDoc();
-    if (!doc?.pdfDoc) return;
-    if (this.mounted.has(pageIndex)) return;
-    let pv = this.pageViews.get(pageIndex);
-    if (!pv) {
-      pv = new PageView(pageIndex);
-      this.pageViews.set(pageIndex, pv);
-    }
-    const page = await doc.pdfDoc.getPage(pageIndex + 1);
-    await pv.renderPdf(page, zoom);
-    this.mounted.add(pageIndex);
-  }
-
-  private evictDistantPages(center: number, radius: number): void {
-    for (const [i, pv] of this.pageViews) {
-      if (Math.abs(i - center) > radius) {
-        pv.evict();
-        this.pageViews.delete(i);
-        this.mounted.delete(i);
+  /** Prefetch neighbour pages a beat after the current page is crisp, and
+   *  only at overview zooms — CAD sheets are too heavy to speculate on while
+   *  the user is zoomed into details. */
+  private schedulePrefetch(): void {
+    if (this._prefetchTimer !== null) clearTimeout(this._prefetchTimer);
+    if (this.getZoom() > PREFETCH_MAX_ZOOM) return;
+    this._prefetchTimer = window.setTimeout(async () => {
+      this._prefetchTimer = null;
+      const doc = getActiveDoc();
+      if (!doc?.pdfDoc || doc.viewMode !== 'single' || this._settling) return;
+      const zoom = this.getZoom();
+      const center = doc.currentPage;
+      for (let delta = 1; delta <= PREFETCH_RADIUS; delta++) {
+        for (const sign of [-1, 1]) {
+          const i = center + sign * delta;
+          if (i < 0 || i >= doc.pageCount) continue;
+          const info = doc.pages[i];
+          if (!info) continue;
+          let pv = this.pageViews.get(i);
+          if (!pv) {
+            pv = new PageView(i);
+            this.pageViews.set(i, pv);
+          }
+          pv.setLayout(info.width, info.height, zoom);
+          if (pv.hasBase() && pv.baseIsCrisp()) continue;
+          if (this._settling) return; // a new zoom/page came in — stop
+          const page = await doc.pdfDoc.getPage(i + 1);
+          await pv.renderBase(page);
+        }
       }
-    }
-  }
-
-  private _evictAll(): void {
-    for (const pv of this.pageViews.values()) pv.evict();
-    this.pageViews.clear();
-    this.mounted.clear();
+    }, 350);
   }
 
   // ─── Continuous mode ──────────────────────────────────────────────────────
@@ -334,63 +400,112 @@ export class Workspace {
     this.el.querySelector('.empty-state')?.remove();
   }
 
-  private rebuildContinuousLayout(): void {
+  private layoutContinuous(zoomChanged: boolean): void {
     const doc = getActiveDoc();
     if (!doc) return;
-    this.contentEl.innerHTML = '';
-    for (let i = 0; i < doc.pageCount; i++) {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'page-wrapper';
-      wrapper.dataset.page = String(i);
-      const pv = this.pageViews.get(i) ?? new PageView(i);
-      this.pageViews.set(i, pv);
-      wrapper.appendChild(pv.el);
-      this.contentEl.appendChild(wrapper);
+    const zoom = this.getZoom();
+    // Rebuild the wrapper stack only when the page list actually changed —
+    // refresh() runs on every state change (cursor moves included)
+    if (this.contentEl.querySelectorAll('.page-wrapper').length !== doc.pageCount) {
+      this.contentEl.innerHTML = '';
+      for (let i = 0; i < doc.pageCount; i++) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'page-wrapper';
+        wrapper.dataset.page = String(i);
+        const pv = this.pageViews.get(i) ?? new PageView(i);
+        this.pageViews.set(i, pv);
+        const info = doc.pages[i];
+        if (info) pv.setLayout(info.width, info.height, zoom);
+        wrapper.appendChild(pv.el);
+        this.contentEl.appendChild(wrapper);
+      }
+      this.onScroll();
+      return;
     }
+    if (zoomChanged) {
+      this.applyLayoutNow();
+      this.scheduleCrisp(ZOOM_SETTLE_MS);
+    } else {
+      // Make sure visible pages have their base render
+      for (const i of this.visiblePages()) {
+        const pv = this.pageViews.get(i);
+        if (pv && !pv.hasBase()) {
+          this.scheduleCrisp(0);
+          break;
+        }
+      }
+    }
+  }
+
+  /** Page indices whose wrappers intersect the viewport (± buffer). */
+  private visiblePages(): number[] {
+    const doc = getActiveDoc();
+    if (!doc) return [];
+    if (doc.viewMode === 'single') return [doc.currentPage];
+    const scrollTop = this.scrollEl.scrollTop;
+    const viewH = this.scrollEl.clientHeight;
+    const out: number[] = [];
+    for (let i = 0; i < doc.pageCount; i++) {
+      const wrapper = this.contentEl.querySelector(`.page-wrapper[data-page="${i}"]`) as HTMLElement | null;
+      if (!wrapper) continue;
+      const top = wrapper.offsetTop;
+      const h = wrapper.offsetHeight;
+      if (top + h >= scrollTop - BUFFER * h && top <= scrollTop + viewH + BUFFER * h) {
+        out.push(i);
+      }
+    }
+    return out;
   }
 
   private onScroll(): void {
-    const doc = getActiveDoc();
-    if (!doc || doc.viewMode === 'single') return;
+    if (this._scrollRaf !== null) return;
+    this._scrollRaf = requestAnimationFrame(() => {
+      this._scrollRaf = null;
+      const doc = getActiveDoc();
+      if (!doc) return;
 
-    const scrollTop = this.scrollEl.scrollTop;
-    const viewH = this.scrollEl.clientHeight;
-    const zoom = this.getZoom();
+      // Keep the markup layer aligned with the viewport (cheap vector redraw)
+      this.updateRegions();
 
-    for (let i = 0; i < doc.pageCount; i++) {
-      const wrapper = this.contentEl.querySelector(`[data-page="${i}"]`) as HTMLElement | null;
-      if (!wrapper) continue;
-      const top = wrapper.offsetTop;
-      const h = (doc.pages[i]?.height ?? 792) * zoom;
-      const visible = top + h >= scrollTop - BUFFER * h && top <= scrollTop + viewH + BUFFER * h;
-      if (visible && !this.mounted.has(i)) {
-        void this.mountPage(i);
+      if (doc.viewMode === 'continuous') {
+        // Mount/render pages entering the buffered viewport
+        for (const i of this.visiblePages()) {
+          const pv = this.pageViews.get(i);
+          if (pv && !pv.hasBase()) {
+            this.scheduleCrisp(0);
+            break;
+          }
+        }
+        this.updateCurrentPageFromScroll();
       }
-    }
-    this.updateCurrentPageFromScroll();
+
+      // Crisp detail for the settled viewport
+      if (this._detailTimer !== null) clearTimeout(this._detailTimer);
+      this._detailTimer = window.setTimeout(() => {
+        this._detailTimer = null;
+        if (this._settling) return;
+        for (const i of this.visiblePages()) {
+          const pv = this.pageViews.get(i);
+          if (pv?.hasBase()) void pv.renderDetail();
+        }
+      }, SCROLL_SETTLE_MS);
+    });
   }
 
-  private async mountPage(pageIndex: number): Promise<void> {
-    const doc = getActiveDoc();
-    if (!doc?.pdfDoc || this.mounted.has(pageIndex)) return;
-    let pv = this.pageViews.get(pageIndex);
-    if (!pv) {
-      pv = new PageView(pageIndex);
-      this.pageViews.set(pageIndex, pv);
-    }
-    const page = await doc.pdfDoc.getPage(pageIndex + 1);
-    await pv.renderPdf(page, this.getZoom());
-    const wrapper = this.contentEl.querySelector(`[data-page="${pageIndex}"]`);
-    if (wrapper && !wrapper.querySelector('.page-view')) {
-      wrapper.appendChild(pv.el);
-    }
-    this.mounted.add(pageIndex);
-    this.redrawPageMarkups(pageIndex);
-    // If this page is the overlay target and rendered after the last sync,
-    // force a re-sync so the overlay canvas matches the now-final page size.
-    if (doc.overlayEnabled && pageIndex === doc.currentPage) {
-      this._lastOverlayKey = '';
-      this.syncOverlays();
+  /** Recompute each mounted page's visible region; redraw markups for pages
+   *  whose region moved (region redraws are cheap vector work). */
+  private updateRegions(): void {
+    const view = this.scrollEl.getBoundingClientRect();
+    for (const [i, pv] of this.pageViews) {
+      if (!pv.el.isConnected) continue;
+      const r = pv.el.getBoundingClientRect();
+      const changed = pv.setVisibleRegion({
+        x: view.left - r.left,
+        y: view.top - r.top,
+        w: view.width,
+        h: view.height,
+      });
+      if (changed) this.redrawPageMarkups(i);
     }
   }
 
@@ -408,18 +523,58 @@ export class Workspace {
     }
   }
 
+  /** Apply the Overlay bar state: composite the chosen pages onto the current
+   *  page's overlay canvas, and clear overlays everywhere else. Slot bitmaps
+   *  are cached inside the PageView, so opacity/multiply tweaks and capped
+   *  deep zooms recomposite without touching the PDF worker. */
+  private syncOverlays(force = false): void {
+    const doc = getActiveDoc();
+    if (!doc?.pdfDoc) return;
+    if (this._settling && !force) return; // wait for the crisp pass
+    const pv = this.pageViews.get(doc.currentPage);
+    const key = [
+      doc.id,
+      doc.currentPage,
+      pv ? pv.getRenderScale().toFixed(4) : '0',
+      doc.overlayEnabled,
+      doc.overlayMultiply,
+      JSON.stringify(doc.overlays),
+    ].join('|');
+    if (!force && key === this._lastOverlayKey) return;
+    this._lastOverlayKey = key;
+    for (const [i, view] of this.pageViews) {
+      if (doc.overlayEnabled && i === doc.currentPage) {
+        void view.renderOverlays(doc.pdfDoc, doc.overlays, doc.overlayMultiply);
+      } else {
+        view.clearOverlays();
+      }
+    }
+  }
+
+  private evictDistantPages(center: number, radius: number): void {
+    for (const [i, pv] of this.pageViews) {
+      if (Math.abs(i - center) <= radius) continue;
+      pv.evict();
+      // Keep views whose element is still mounted (continuous-mode wrappers)
+      // so they can re-render into place; drop detached ones entirely.
+      if (!pv.el.isConnected) this.pageViews.delete(i);
+    }
+  }
+
+  private _evictAll(): void {
+    this._clearTimers();
+    this._settling = false;
+    for (const pv of this.pageViews.values()) pv.evict();
+    this.pageViews.clear();
+  }
+
   // ─── Markup / selection ───────────────────────────────────────────────────
 
   redrawAllMarkups(): void {
     const doc = getActiveDoc();
     if (!doc) return;
-    if (doc.viewMode === 'single') {
-      // Only the current page is in the DOM; no need to iterate all mounted pages
-      this.redrawPageMarkups(doc.currentPage);
-      return;
-    }
-    for (const i of this.mounted) {
-      this.redrawPageMarkups(i);
+    for (const [i, pv] of this.pageViews) {
+      if (pv.el.isConnected) this.redrawPageMarkups(i);
     }
   }
 
@@ -464,6 +619,9 @@ export class Workspace {
     } else {
       updateActiveDoc((d) => ({ ...d, zoom: newZoom }));
     }
+    // Resize the layout synchronously so the scroll compensation below isn't
+    // clamped against the old content size.
+    this.applyLayoutNow();
     // Apply scroll compensation before the RAF-batched refresh fires.
     // Only the page area scales — the CONTENT_PAD slack around it doesn't —
     // so anchor the cursor in page coordinates, not raw content coordinates.

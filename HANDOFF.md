@@ -75,6 +75,31 @@ structure:
   `ARROW_LEN`/`ARROW_SPREAD` in `src/markups/draw.ts`; size options go up to
   800% of the line weight.
 
+### Rendering pipeline (rebuilt 2026-07-10 for large CAD/Revit PDFs)
+Tuned for multi-MB vector sheets (tested with a 31MB / 53-page ARCH D set):
+
+- **Capped base + visible-region detail.** Each page's full bitmap is capped
+  at `MAX_BASE_PIXELS` (16M px, `PageView.ts`) and CSS-stretched; when the
+  screen needs more, a `detailCanvas` re-renders ONLY the visible region at
+  the exact zoom (pdfjs `transform` offset). Deep zooms therefore cost a
+  ~1–2M px region render (tens of ms) instead of a gigapixel page.
+- **Never blank.** Renders go to offscreen canvases and blit on completion;
+  `setLayout()` synchronously stretches the existing bitmaps to the new zoom.
+- **Settle debouncing.** Rapid wheel zooms only restyle CSS; the crisp pass
+  runs once, `ZOOM_SETTLE_MS` after the last step (`Workspace.scheduleCrisp`).
+  In-flight renders are cancelled when superseded.
+- **Region markup canvas.** The markup layer covers just the viewport
+  (+30% margin) and redraws synchronously — markups never lag the PDF.
+  `screenToPage` maps through the page element's layout size, independent of
+  any bitmap resolution. Snip uses `PageView.captureRegion()`.
+- **Overlay bitmap cache.** Slot pages rasterize once per capped scale into
+  `_ovCache`; opacity/multiply changes and zoom steps above the cap only
+  recomposite (~1ms). Overlay renders are cancellable.
+- **Prefetch gating.** Neighbour pages (±2) prefetch 350ms after the crisp
+  pass and only at zoom ≤ 1.5 — never while studying details.
+- Continuous mode rebuilds its wrapper stack only when the page count
+  changes (it used to rebuild on every state change, including cursor moves).
+
 ## Resolved history (condensed)
 - **Upside-down rendering / broken pdfjs v6:** caused by the *modern* pdfjs
   build requiring `Math.sumPrecise` etc.; fixed by importing the **legacy**

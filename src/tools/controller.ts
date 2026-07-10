@@ -1168,12 +1168,8 @@ async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace
   const sy = (ph - r.y - r.height) * scale;
   const sw = r.width * scale;
   const sh = r.height * scale;
-  const tmp = document.createElement('canvas');
-  tmp.width = sw;
-  tmp.height = sh;
-  const ctx = tmp.getContext('2d')!;
-  ctx.drawImage(pv.pdfCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-  ctx.drawImage(pv.markupCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  // PageView composites base + crisp detail + markups for the region
+  const tmp = pv.captureRegion(sx, sy, sw, sh);
   const imageData = tmp.toDataURL('image/png');
   const snip: Markup = {
     id: uid(),
