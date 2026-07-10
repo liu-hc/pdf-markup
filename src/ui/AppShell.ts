@@ -12,7 +12,7 @@ import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, PAGE_SIZES, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
-import { openFilePicker, saveDocument, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile } from '../pdf/loader';
+import { openFilePicker, saveDocument, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
 import { parseArchScale, parseEngScale } from '../util/geometry';
 // User-guide illustrations (shared with the README)
@@ -427,7 +427,7 @@ function showHelpDialog(): void {
         <li><strong>Split view</strong> — duplicate the active page in a second pane (vertical or horizontal) with its own independent zoom; drag the divider to resize.</li>
         <li><strong>Overlay</strong> — composite up to two other pages over the current one with per-slot opacity and an optional Photoshop-style Multiply blend — ideal for comparing revisions.</li>
         <li><strong>Snip (S)</strong> — drag a region to copy that patch of page <em>plus its markups</em> to the clipboard; Ctrl+V pastes it at the cursor.</li>
-        <li>Right-click a thumbnail to <strong>insert blank pages</strong> (Letter → ARCH E) or <strong>rotate</strong> a page.</li>
+        <li>Right-click a thumbnail to manage pages: <strong>Add New…</strong> (pick a paper size and orientation, insert before or after), <strong>Copy</strong> the page, <strong>Paste Before / Paste After</strong> (the copy carries the page content <em>and its markups</em> — even into another open document), <strong>Delete</strong>, or <strong>rotate</strong>.</li>
       </ul>
     </div>
 
@@ -891,6 +891,9 @@ const _thumbCache = new Map<string, Map<number, string>>();
 let _thumbObserver: IntersectionObserver | null = null;
 /** Doc ID for which the thumbnail list was last built. */
 let _thumbDocId: string | null = null;
+/** The pdfDoc proxy the thumbnails were rendered from — page insert / delete /
+ *  paste / rotate replace it, and the cached thumbs (keyed by index) go stale. */
+let _thumbPdfDoc: unknown = null;
 
 function renderLeftPanel(root: HTMLElement, ws: Workspace): void {
   const content = root.querySelector('.left-panel .panel-content') as HTMLElement | null;
@@ -912,14 +915,23 @@ function renderLeftPanel(root: HTMLElement, ws: Workspace): void {
     return;
   }
 
-  // Only rebuild the DOM when the document changes; otherwise just update active highlight
-  if (doc.id !== _thumbDocId || content.querySelectorAll('.thumb-item').length !== doc.pageCount) {
+  // Only rebuild the DOM when the document (or its pdfDoc, after a page
+  // insert/delete/paste/rotate) changes; otherwise just update the highlight
+  if (
+    doc.id !== _thumbDocId ||
+    doc.pdfDoc !== _thumbPdfDoc ||
+    content.querySelectorAll('.thumb-item').length !== doc.pageCount
+  ) {
     _thumbObserver?.disconnect();
     content.innerHTML = '';
     _thumbDocId = doc.id;
 
     if (!_thumbCache.has(doc.id)) _thumbCache.set(doc.id, new Map());
     const cache = _thumbCache.get(doc.id)!;
+    // A new pdfDoc proxy means the cached thumbnails (keyed by page index)
+    // no longer match the pages — flush and re-render them
+    if (doc.pdfDoc !== _thumbPdfDoc) cache.clear();
+    _thumbPdfDoc = doc.pdfDoc;
     const pdfDoc = doc.pdfDoc;
 
     _thumbObserver = new IntersectionObserver(
@@ -1010,14 +1022,21 @@ function _renderThumb(
 }
 
 function showPageContextMenu(e: MouseEvent, pageIndex: number, docId: string): void {
+  const doc = getState().documents.find((d) => d.id === docId);
+  const canPaste = hasPageClipboard();
+  const canDelete = (doc?.pageCount ?? 0) > 1;
+
   const menu = document.createElement('div');
   menu.className = 'context-menu';
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
   menu.innerHTML = `
-    <label class="ctx-row">Size <select class="ctx-size-select">${Object.keys(PAGE_SIZES).map((k) => `<option value="${k}">${k}</option>`).join('')}</select></label>
-    <button data-action="insert-before">Insert page before</button>
-    <button data-action="insert-after">Insert page after</button>
+    <button data-action="add-new">Add New…</button>
+    <button data-action="copy">Copy</button>
+    <button data-action="paste-before" ${canPaste ? '' : 'disabled'}>Paste Before</button>
+    <button data-action="paste-after" ${canPaste ? '' : 'disabled'}>Paste After</button>
+    <button data-action="delete" ${canDelete ? '' : 'disabled'} title="${canDelete ? '' : 'The last page cannot be deleted'}">Delete</button>
+    <div class="ctx-sep"></div>
     <button data-action="rotate-90">Rotate 90°</button>
     <button data-action="rotate-180">Rotate 180°</button>
   `;
@@ -1026,15 +1045,57 @@ function showPageContextMenu(e: MouseEvent, pageIndex: number, docId: string): v
   menu.querySelectorAll('button').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const action = (btn as HTMLElement).dataset.action!;
-      const sizeKey = (menu.querySelector('.ctx-size-select') as HTMLSelectElement | null)?.value ?? 'ARCH D';
-      if (action === 'insert-before') await insertBlankPage(docId, pageIndex, sizeKey);
-      if (action === 'insert-after') await insertBlankPage(docId, pageIndex + 1, sizeKey);
-      if (action === 'rotate-90') await rotatePage(docId, pageIndex, 90);
-      if (action === 'rotate-180') await rotatePage(docId, pageIndex, 180);
       close();
+      switch (action) {
+        case 'add-new':
+          showInsertPageDialog(docId, pageIndex);
+          break;
+        case 'copy':
+          copyPage(docId, pageIndex);
+          break;
+        case 'paste-before':
+          await pastePage(docId, pageIndex);
+          break;
+        case 'paste-after':
+          await pastePage(docId, pageIndex + 1);
+          break;
+        case 'delete':
+          await deletePage(docId, pageIndex);
+          break;
+        case 'rotate-90':
+          await rotatePage(docId, pageIndex, 90);
+          break;
+        case 'rotate-180':
+          await rotatePage(docId, pageIndex, 180);
+          break;
+      }
     });
   });
   setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+}
+
+/** "Add New…" from a thumbnail: pick paper size + orientation, then insert
+ *  the blank page before or after the right-clicked page. */
+function showInsertPageDialog(docId: string, pageIndex: number): void {
+  const overlay = openModal(
+    'Add new page',
+    `<label class="modal-field">Paper size
+      <select class="np-size">${NEW_FILE_SIZES.map((s) => `<option value="${s.key}">${s.label}</option>`).join('')}</select></label>
+    <label class="modal-field">Orientation
+      <select class="np-orient"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label>
+    <div class="modal-actions">
+      <button class="modal-btn-ghost np-before">Insert before</button>
+      <button class="modal-btn np-after">Insert after</button>
+    </div>`,
+  );
+  const doInsert = async (at: number): Promise<void> => {
+    const sizeKey = (overlay.querySelector('.np-size') as HTMLSelectElement).value;
+    const landscape = (overlay.querySelector('.np-orient') as HTMLSelectElement).value === 'landscape';
+    overlay.remove();
+    await insertBlankPage(docId, at, sizeKey, landscape);
+  };
+  overlay.querySelector('.np-before')?.addEventListener('click', () => void doInsert(pageIndex));
+  overlay.querySelector('.np-after')?.addEventListener('click', () => void doInsert(pageIndex + 1));
 }
 
 function renderRightPanel(root: HTMLElement): void {

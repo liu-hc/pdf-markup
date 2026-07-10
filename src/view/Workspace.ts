@@ -26,6 +26,9 @@ export class Workspace {
   private mounted = new Set<number>();
   private unsub: (() => void) | null = null;
   private _lastDocId: string | null = null;
+  /** The pdfDoc proxy last rendered — page insert/delete/rotate/paste replace
+   *  it, and every cached page render is stale when that happens. */
+  private _lastPdfDoc: unknown = null;
   private _lastZoom = 0;
   private _rafId: number | null = null;
   /** Signature of the last overlay render, to skip redundant work. */
@@ -155,6 +158,14 @@ export class Workspace {
       this._lastDocId = doc.id;
       this._lastZoom = 0;
       this._centerNext = true;
+    }
+
+    // Same document but a new pdfDoc proxy (page inserted / deleted / pasted /
+    // rotated) — the cached renders are indexed by page number and stale
+    if (doc.pdfDoc !== this._lastPdfDoc) {
+      this._evictAll();
+      this.contentEl.innerHTML = '';
+      this._lastPdfDoc = doc.pdfDoc;
     }
 
     // Zoom changed — all cached renders are at the wrong scale

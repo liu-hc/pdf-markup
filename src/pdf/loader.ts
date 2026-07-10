@@ -12,7 +12,7 @@ import {
   ensurePageDefaults,
   uid,
 } from '../state/store';
-import type { PageInfo } from '../state/types';
+import type { Markup, PageDefaults, PageInfo } from '../state/types';
 import { DEFAULT_PAGE_DEFAULTS } from '../state/types';
 import { parseMarkupsFromMetadata, parseMarkupsFromAnnotations } from './importMarkups';
 
@@ -188,6 +188,7 @@ export async function insertBlankPage(
   docId: string,
   atIndex: number,
   sizeKey: string,
+  landscape = false,
 ): Promise<void> {
   const { PAGE_SIZES } = await import('../state/types');
   const size = PAGE_SIZES[sizeKey] ?? PAGE_SIZES['ARCH D']!;
@@ -196,7 +197,7 @@ export async function insertBlankPage(
 
   const { PDFDocument } = await import('pdf-lib');
   const pdf = await PDFDocument.load(doc.pdfBytes!);
-  pdf.insertPage(atIndex, [size.w, size.h]);
+  pdf.insertPage(atIndex, landscape ? [size.h, size.w] : [size.w, size.h]);
   const bytes = new Uint8Array(await pdf.save());
   const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
   const pages = await loadPageInfos(pdfDoc);
@@ -213,6 +214,106 @@ export async function insertBlankPage(
     markups: d.markups.map((m) =>
       m.pageIndex >= atIndex ? { ...m, pageIndex: m.pageIndex + 1 } : m,
     ),
+    dirty: true,
+  }));
+}
+
+/** Delete a page (never the last one). Markups on the page are removed;
+ *  markups on later pages shift back by one. */
+export async function deletePage(docId: string, pageIndex: number): Promise<void> {
+  const doc = getState().documents.find((d) => d.id === docId);
+  if (!doc?.pdfBytes || doc.pageCount <= 1) return;
+
+  const { PDFDocument } = await import('pdf-lib');
+  const pdf = await PDFDocument.load(doc.pdfBytes);
+  pdf.removePage(pageIndex);
+  const bytes = new Uint8Array(await pdf.save());
+  const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const pages = await loadPageInfos(pdfDoc);
+  const defaults = ensurePageDefaults(doc);
+  defaults.splice(pageIndex, 1);
+
+  updateDoc(docId, (d) => ({
+    ...d,
+    pdfBytes: bytes,
+    pdfDoc,
+    pageCount: pdfDoc.numPages,
+    pages,
+    pageDefaults: defaults,
+    markups: d.markups
+      .filter((m) => m.pageIndex !== pageIndex)
+      .map((m) => (m.pageIndex > pageIndex ? { ...m, pageIndex: m.pageIndex - 1 } : m)),
+    currentPage:
+      d.currentPage > pageIndex
+        ? d.currentPage - 1
+        : Math.min(d.currentPage, pdfDoc.numPages - 1),
+    dirty: true,
+  }));
+}
+
+/* ── Page clipboard (thumbnail Copy / Paste Before / Paste After) ────────
+   Holds a snapshot of the copied page: the source PDF bytes at copy time,
+   the page's markups and its page defaults. Module-level, so a page can be
+   pasted into a different document too. */
+interface PageClipboard {
+  bytes: Uint8Array;
+  pageIndex: number;
+  markups: Markup[];
+  defaults: PageDefaults;
+}
+
+let pageClipboard: PageClipboard | null = null;
+
+export function hasPageClipboard(): boolean {
+  return pageClipboard !== null;
+}
+
+export function copyPage(docId: string, pageIndex: number): void {
+  const doc = getState().documents.find((d) => d.id === docId);
+  if (!doc?.pdfBytes) return;
+  pageClipboard = {
+    bytes: doc.pdfBytes.slice(),
+    pageIndex,
+    markups: doc.markups
+      .filter((m) => m.pageIndex === pageIndex)
+      .map((m) => structuredClone(m)),
+    defaults: { ...(doc.pageDefaults[pageIndex] ?? DEFAULT_PAGE_DEFAULTS) },
+  };
+}
+
+/** Insert the copied page (content + markups + page defaults) at `atIndex`. */
+export async function pastePage(docId: string, atIndex: number): Promise<void> {
+  const clip = pageClipboard;
+  const doc = getState().documents.find((d) => d.id === docId);
+  if (!clip || !doc?.pdfBytes) return;
+
+  const { PDFDocument } = await import('pdf-lib');
+  const target = await PDFDocument.load(doc.pdfBytes);
+  const source = await PDFDocument.load(clip.bytes);
+  const [copied] = await target.copyPages(source, [clip.pageIndex]);
+  target.insertPage(atIndex, copied!);
+  const bytes = new Uint8Array(await target.save());
+  const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const pages = await loadPageInfos(pdfDoc);
+  const defaults = ensurePageDefaults(doc);
+  defaults.splice(atIndex, 0, { ...clip.defaults });
+  const pasted = clip.markups.map((m) => ({
+    ...structuredClone(m),
+    id: uid(),
+    pageIndex: atIndex,
+  }));
+
+  updateDoc(docId, (d) => ({
+    ...d,
+    pdfBytes: bytes,
+    pdfDoc,
+    pageCount: pdfDoc.numPages,
+    pages,
+    pageDefaults: defaults,
+    markups: [
+      ...d.markups.map((m) => (m.pageIndex >= atIndex ? { ...m, pageIndex: m.pageIndex + 1 } : m)),
+      ...pasted,
+    ],
     dirty: true,
   }));
 }

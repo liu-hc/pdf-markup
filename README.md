@@ -147,8 +147,10 @@ in a single PDF page.
   for comparing revisions.
 - **Snip (S)** — drag a region to copy that patch of page *plus its markups*
   to the clipboard; Ctrl+V pastes it at the cursor.
-- Right-click a thumbnail to **insert blank pages** (Letter → ARCH E) or
-  **rotate** a page.
+- Right-click a thumbnail to manage pages: **Add New…** (pick a paper size
+  Letter → ARCH E and orientation, insert before or after), **Copy** the page,
+  **Paste Before / Paste After** (the copy carries the page content *and its
+  markups* — even into another open document), **Delete**, or **rotate**.
 
 ## Keyboard shortcuts
 

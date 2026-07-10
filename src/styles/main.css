@@ -1569,6 +1569,15 @@ body.grabbing * {
   background: var(--chrome-4);
 }
 
+.context-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.context-menu button:disabled:hover {
+  background: transparent;
+}
+
 .ctx-sep {
   height: 1px;
   margin: 4px 8px;
