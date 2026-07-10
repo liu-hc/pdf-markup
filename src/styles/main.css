@@ -120,17 +120,16 @@ input, select, textarea, button {
 .workspace-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
 
 /* ── App shell grid ────────────────────────────────────────────────────── */
-/* menubar · doc-tabs · overlay-bar · main (canvas + floating glass) · status */
+/* menubar · doc-tabs · main (canvas + floating glass) · status */
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   height: 100%;
 }
 
 /* ── Shared chrome surface ─────────────────────────────────────────────── */
 .menubar,
-.doc-tabs,
-.overlay-bar {
+.doc-tabs {
   background: var(--chrome);
 }
 
@@ -605,24 +604,23 @@ input, select, textarea, button {
   border-color: var(--accent-border);
 }
 
-/* ── Overlay bar ───────────────────────────────────────────────────────── */
-.overlay-bar {
-  padding: 6px 12px;
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  border-bottom: 1px solid var(--chrome-border);
+/* ── Overlay controls — a ribbon group after the page-default colors.
+   The ribbon flex-wraps, so when the row is full this group drops to the
+   next line inside the same glass panel. ─────────────────────────────── */
+.ribbon-group.overlay-bar {
+  border-right: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Stay a (zero-height) grid item when hidden so the flexible 1fr track keeps
-   landing on .main-area — display:none would shift it onto the status bar and
-   shrink the canvas (most visible on first open, before a page is loaded). */
-.overlay-bar.hidden {
-  height: 0;
-  min-height: 0;
-  padding: 0;
-  border: none;
-  overflow: hidden;
+.ribbon-group.overlay-bar.hidden {
+  display: none;
+}
+
+.overlay-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
 }
 
 .overlay-slot {
@@ -637,6 +635,7 @@ input, select, textarea, button {
   color: var(--text);
   border-radius: 7px;
   padding: 3px 7px;
+  height: 26px;
   font-size: var(--font-sm);
 }
 
@@ -1436,12 +1435,14 @@ body.grabbing * {
 }
 .markups-list li.selected .mk-name { color: #fff; }
 
-/* Info text (abbreviated "ab…yz"), right-aligned */
+/* Info text, right-aligned. Fills the leftover row space and ellipsizes
+   only when the full string genuinely doesn't fit. */
 .markups-list .mk-id {
-  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
   color: var(--ink-3);
   font-size: var(--font-xs);
-  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -105,7 +105,6 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
       <button class="btn-save" title="Save (Ctrl+S)">Save</button>
     </header>
     <div class="doc-tabs"></div>
-    <div class="overlay-bar hidden"></div>
     <div class="main-area">
       <div class="center-column">
         <div class="viewer-stack">
@@ -638,6 +637,13 @@ function wireRibbon(root: HTMLElement): void {
   pageGroup.appendChild(pd);
   ribbon.appendChild(pageGroup);
 
+  // Overlay controls live in the ribbon: on the same row after the color
+  // boxes when there's room, wrapping to the next ribbon row when not.
+  const overlayGroup = document.createElement('div');
+  overlayGroup.className = 'ribbon-group overlay-bar hidden';
+  overlayGroup.innerHTML = `<span class="ribbon-label">Overlay</span><div class="overlay-controls"></div>`;
+  ribbon.appendChild(overlayGroup);
+
   pd.querySelector('.scale-select')?.addEventListener('change', (e) => {
     const label = (e.target as HTMLSelectElement).value;
     if (label === 'Custom') {
@@ -726,11 +732,8 @@ function wireRibbon(root: HTMLElement): void {
   });
 
   overlayBtn.addEventListener('click', () => {
+    // Visibility + contents derive from state in renderChrome
     updateActiveDoc((d) => ({ ...d, overlayEnabled: !d.overlayEnabled }));
-    // Derive visibility from state (not a blind toggle) so it can't drift
-    const bar = root.querySelector('.overlay-bar')!;
-    bar.classList.toggle('hidden', !(getActiveDoc()?.overlayEnabled ?? false));
-    renderOverlayBar(root);
   });
 
   snipBtn.addEventListener('click', () => setActiveTool('snip'));
@@ -898,6 +901,17 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   const overlayBtn = root.querySelector('.btn-overlay') as HTMLElement | null;
   if (overlayBtn) overlayBtn.classList.toggle('active', doc?.overlayEnabled ?? false);
 
+  // Overlay controls (in the ribbon): visibility + contents derive from state.
+  // Rebuild the selects only when the document or its page count changes so
+  // an open dropdown isn't yanked out from under the user.
+  const overlayOn = doc?.overlayEnabled ?? false;
+  root.querySelector('.overlay-bar')?.classList.toggle('hidden', !overlayOn);
+  const overlayBarKey = overlayOn && doc ? `${doc.id}:${doc.pageCount}` : '';
+  if (overlayBarKey !== _overlayBarKey) {
+    _overlayBarKey = overlayBarKey;
+    if (overlayOn) renderOverlayBar(root);
+  }
+
   if (doc) {
     const defaults = doc.pageDefaults[doc.currentPage];
     root.querySelector('.hud-scale')!.textContent = `Scale: ${defaults?.scaleLabel ?? 'None'}`;
@@ -982,6 +996,8 @@ const _thumbCache = new Map<string, Map<number, string>>();
 let _thumbObserver: IntersectionObserver | null = null;
 /** Doc ID for which the thumbnail list was last built. */
 let _thumbDocId: string | null = null;
+/** Signature (docId:pageCount) of the last-built overlay controls. */
+let _overlayBarKey = '';
 /** The pdfDoc proxy the thumbnails were rendered from — page insert / delete /
  *  paste / rotate replace it, and the cached thumbs (keyed by index) go stale. */
 let _thumbPdfDoc: unknown = null;
@@ -1199,7 +1215,7 @@ function renderRightPanel(root: HTMLElement): void {
   props.innerHTML = renderProperties(doc, state.selectedMarkupIds);
   wireProperties(props as HTMLElement, state.selectedMarkupIds[0]);
   // Totals always live at the bottom of the panel (above the Markups list)
-  totalsBlock.innerHTML = renderTotals(doc);
+  totalsBlock.innerHTML = renderTotals(doc, state.selectedMarkupIds[0]);
 
   list.innerHTML = '';
   if (!doc) return;
@@ -1227,28 +1243,23 @@ function renderRightPanel(root: HTMLElement): void {
     idSpan.className = 'mk-id';
     // Right-hand info: the measurement value for measure markups, the text
     // content for text-bearing ones, and the id ONLY when neither exists.
-    // Measurement values show in full; text/ids abbreviate to "abcd…wxyz".
+    // CSS ellipsizes the span when (and only when) it doesn't fit the row.
     const sf = doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null;
     let info = '';
-    let isValue = false;
     if (m.type === 'dimension') {
       info = formatLength(dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }), sf, m.roundTo);
-      isValue = true;
     } else if (m.type === 'polyline') {
       info = formatLength(polylineLength(m.points), sf);
-      isValue = true;
     } else if (m.type === 'polygon' && m.points.length >= 3) {
       info = formatArea(polygonArea(m.points), sf, m.decimals);
-      isValue = true;
     } else if (m.type === 'measureAngle') {
       info = formatAngle(angleDegrees(m.p1, m.vertex, m.p2));
-      isValue = true;
     } else if ('content' in m && m.content) {
       info = m.content;
     }
     if (!info) info = m.description ?? m.id;
     info = info.replace(/\s+/g, ' ').trim();
-    idSpan.textContent = !isValue && info.length > 9 ? `${info.slice(0, 4)}…${info.slice(-4)}` : info;
+    idSpan.textContent = info;
     idSpan.title = info;
     // Padlock: unlocked by default; click to lock (= reversible flatten —
     // drawn in place but not selectable/editable until unlocked)
@@ -1768,25 +1779,53 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   });
 }
 
-function renderTotals(doc: ReturnType<typeof getActiveDoc>): string {
-  if (!doc) return '';
-  const page = doc.currentPage;
-  const defaults = doc.pageDefaults[page];
-  const markups = doc.markups.filter((m) => m.pageIndex === page);
-  let linear = 0;
-  let polyLen = 0;
-  let area = 0;
-  for (const m of markups) {
-    if (m.type === 'dimension') linear += dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 });
-    if (m.type === 'polyline' && m.showLength) polyLen += polylineLength(m.points);
-    if (m.type === 'polygon' && m.showArea) area += polygonArea(m.points);
+/** Measurement readout for the SELECTED markup only — hidden when nothing is
+ *  selected or the selection has nothing measurable. Which rows appear
+ *  depends on the markup: linear for dimensions/lines, length for polylines,
+ *  perimeter + area for enclosing shapes, degrees for angles. */
+function renderTotals(doc: ReturnType<typeof getActiveDoc>, selectedId?: string): string {
+  if (!doc || !selectedId) return '';
+  const m = doc.markups.find((mk) => mk.id === selectedId);
+  if (!m) return '';
+  const sf = doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null;
+  const rows: [string, string][] = [];
+  switch (m.type) {
+    case 'dimension':
+      rows.push(['Linear', formatLength(dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }), sf, m.roundTo)]);
+      break;
+    case 'line':
+      rows.push(['Length', formatLength(dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }), sf)]);
+      break;
+    case 'polyline':
+      rows.push(['Length', formatLength(polylineLength(m.points), sf)]);
+      break;
+    case 'polygon':
+    case 'cloud': {
+      if (m.points.length < 2) return '';
+      rows.push(['Perimeter', formatLength(polylineLength([...m.points, m.points[0]!]), sf)]);
+      if (m.points.length >= 3) rows.push(['Area', formatArea(polygonArea(m.points), sf, m.decimals ?? 2)]);
+      break;
+    }
+    case 'rectangle':
+      rows.push(['Perimeter', formatLength(2 * (m.width + m.height), sf)]);
+      rows.push(['Area', formatArea(m.width * m.height, sf)]);
+      break;
+    case 'ellipse': {
+      // Ramanujan's perimeter approximation
+      const per = Math.PI * (3 * (m.rx + m.ry) - Math.sqrt((3 * m.rx + m.ry) * (m.rx + 3 * m.ry)));
+      rows.push(['Perimeter', formatLength(per, sf)]);
+      rows.push(['Area', formatArea(Math.PI * m.rx * m.ry, sf)]);
+      break;
+    }
+    case 'measureAngle':
+      rows.push(['Angle', formatAngle(angleDegrees(m.p1, m.vertex, m.p2))]);
+      break;
+    default:
+      return '';
   }
-  const sf = defaults?.scaleFactor ?? null;
-  return `<h4>Totals</h4><div class="totals">
-    <p>Linear: ${formatLength(linear, sf)}</p>
-    <p>Polyline: ${formatLength(polyLen, sf)}</p>
-    <p>Area: ${formatArea(area, sf)}</p>
-  </div>`;
+  return `<h4>Measurement</h4><div class="totals">${rows
+    .map(([k, v]) => `<p>${k}: ${v}</p>`)
+    .join('')}</div>`;
 }
 
 function renderStatusBar(root: HTMLElement): void {
@@ -1875,8 +1914,8 @@ function renderSplit(root: HTMLElement, secondaryWs: Workspace): void {
 
 function renderOverlayBar(root: HTMLElement): void {
   const doc = getActiveDoc();
-  const bar = root.querySelector('.overlay-bar')!;
-  if (!doc?.overlayEnabled) return;
+  const bar = root.querySelector('.overlay-bar .overlay-controls');
+  if (!bar || !doc?.overlayEnabled) return;
   bar.innerHTML = '';
   for (let slot = 0; slot < 2; slot++) {
     const row = document.createElement('div');
