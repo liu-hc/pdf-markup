@@ -392,7 +392,10 @@ export class Workspace {
     if (this.el.querySelector('.empty-state')) return;
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.innerHTML = '<p>Drop a PDF here or use File → Open</p>';
+    // The 16×16 pixel-art mascot, scaled 16× with hard pixel edges
+    empty.innerHTML =
+      '<img class="empty-mascot" src="/corgi.png" alt="" width="256" height="256">' +
+      '<p>Drop a PDF here or use File → Open</p>';
     this.el.appendChild(empty);
   }
 
