@@ -1096,16 +1096,17 @@ body.grabbing * {
   user-select: none;
 }
 
-/* Pixel-art mascot (transparent bg): a dark-purple halo behind it fades
-   radially into the muted-blue canvas so the two backgrounds blend */
+/* Pixel-art mascot ("Corgi L", high-res with real transparency): a
+   dark-purple halo behind it fades radially into the muted-blue canvas.
+   No image-rendering:pixelated — the source is far larger than the display
+   size, so a smooth downscale keeps its edges clean. */
 .empty-mascot {
   width: 256px;
   height: 256px;
   padding: 26px;
   box-sizing: content-box;
-  image-rendering: pixelated;
   background: radial-gradient(circle at 50% 46%, rgba(74, 59, 94, 0.85), rgba(64, 52, 84, 0.4) 55%, rgba(64, 52, 84, 0) 72%);
-  opacity: 0.95;
+  opacity: 0.97;
   filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.35));
   user-select: none;
 }
