@@ -392,9 +392,10 @@ export class Workspace {
     if (this.el.querySelector('.empty-state')) return;
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    // The 16×16 pixel-art mascot, scaled 16× with hard pixel edges
+    // Pixel-art mascot (EPX-smoothed, transparent bg) — the purple halo
+    // behind it fades into the canvas, see .empty-mascot in main.css
     empty.innerHTML =
-      '<img class="empty-mascot" src="/corgi.png" alt="" width="256" height="256">' +
+      '<img class="empty-mascot" src="/corgi-hero.png" alt="" width="256" height="256">' +
       '<p>Drop a PDF here or use File → Open</p>';
     this.el.appendChild(empty);
   }

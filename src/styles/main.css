@@ -1,8 +1,8 @@
 /* ══════════════════════════════════════════════════════════════════════════
    Markup Studio — Design System
    Muted-blue chrome, cool frosted-glass overlays with beveled light-catching
-   edges, light drafting canvas, white inspector panel. Monospaced UI for a
-   drafting-table feel.
+   edges, muted dark-blue drafting canvas, white inspector panel.
+   Space Grotesk UI type.
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -32,8 +32,8 @@
   --rail-text:   #dbe6f2;
   --rail-text-2: #a6bad2;
 
-  /* Light center canvas + white inspector panel */
-  --canvas:        #d9dfe7;
+  /* Muted dark-blue drafting canvas + white inspector panel */
+  --canvas:        #27313f;
   --paper:         #ffffff;
   --panel-light:   #f7fafc;
   --panel-border:  #dfe6ee;
@@ -56,7 +56,7 @@
   --glass-dark:   rgba(18, 28, 44, 0.38);
   --glass-rail-a: rgba(52, 76, 106, 0.42);
   --glass-rail-b: rgba(26, 40, 60, 0.4);
-  --glass-light:  rgba(245, 249, 252, 0.52);
+  --glass-light:  rgba(245, 249, 252, 0.78);
   --glass-blur:   blur(36px) saturate(150%);
   --glass-radius: 16px;
   /* Gradient border: bright light-catch top-left, faint along the sides,
@@ -80,12 +80,13 @@
   /* Transitions */
   --t: 130ms ease;
 
-  /* Typography — monospaced UI, three sizes used throughout the chrome */
-  --font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono',
-    Menlo, Consolas, monospace;
-  --font-xs:   10px;  /* uppercase labels, captions */
-  --font-sm:   11px;  /* body controls, panel content */
-  --font-md:   12px;  /* primary text, menubar */
+  /* Typography — Space Grotesk (bundled variable font): a geometric,
+     designer-grade sans with a technical edge. Three sizes throughout. */
+  --font-family: 'Space Grotesk Variable', 'Space Grotesk', 'Avenir Next',
+    ui-sans-serif, system-ui, sans-serif;
+  --font-xs:   10.5px;  /* uppercase labels, captions */
+  --font-sm:   11.5px;  /* body controls, panel content */
+  --font-md:   12.5px;  /* primary text, menubar */
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────── */
@@ -123,7 +124,7 @@ input, select, textarea, button {
 /* The main canvas scrollbar is wider so it's easy to grab */
 .workspace-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
 .workspace-scroll::-webkit-scrollbar-thumb {
-  background: #b2c0cf;
+  background: #55697f;
   border-radius: 6px;
   border: 3px solid var(--canvas);
   background-clip: padding-box;
@@ -159,7 +160,7 @@ input, select, textarea, button {
   position: relative;
 }
 
-/* App mark — brush glyph on a rounded accent chip */
+/* App mark — the pixel corgi as a rounded app-icon chip */
 .app-mark {
   display: flex;
   align-items: center;
@@ -167,14 +168,17 @@ input, select, textarea, button {
   width: 26px;
   height: 26px;
   margin: 0 10px 0 2px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent-bright), var(--accent));
-  box-shadow: 0 2px 8px rgba(62, 123, 214, 0.4);
+  border-radius: 7px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.14);
   flex-shrink: 0;
 }
 
-.app-mark svg {
+.app-mark img {
   display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
 }
 
 .menu-nav {
@@ -429,7 +433,9 @@ input, select, textarea, button {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 9px;
-  color: var(--text-2);
+  /* Near-white with a soft halo — icons must stay readable over the frost */
+  color: #dde7f3;
+  filter: drop-shadow(0 1px 1.5px rgba(8, 16, 30, 0.5));
   cursor: pointer;
   transition: background var(--t), color var(--t), border-color var(--t);
   padding: 0;
@@ -438,7 +444,7 @@ input, select, textarea, button {
 
 .tool-btn:hover {
   background: var(--hover);
-  color: var(--text);
+  color: #ffffff;
   border-color: var(--chrome-border-2);
 }
 
@@ -948,7 +954,7 @@ input, select, textarea, button {
 }
 
 .viewer-pane.secondary {
-  border-left: 1px solid #c0cbd8;
+  border-left: 1px solid #3c4d61;
 }
 
 .viewer-pane.secondary.hidden {
@@ -957,7 +963,7 @@ input, select, textarea, button {
 
 .split-divider {
   width: 4px;
-  background: #c0cbd8;
+  background: #3c4d61;
   cursor: col-resize;
   transition: background var(--t);
 }
@@ -979,9 +985,9 @@ input, select, textarea, button {
   top: 8px;
   right: 8px;
   z-index: 20;
-  background: #fff;
-  border: 1px solid #c0cbd8;
-  color: var(--ink-2);
+  background: var(--chrome-3);
+  border: 1px solid var(--chrome-border-2);
+  color: var(--text-2);
   cursor: pointer;
   width: 24px;
   height: 24px;
@@ -995,8 +1001,8 @@ input, select, textarea, button {
 }
 
 .pane-close:hover {
-  color: var(--ink);
-  background: #eceef8;
+  color: var(--text);
+  background: var(--chrome-4);
 }
 
 /* ── Workspace ─────────────────────────────────────────────────────────── */
@@ -1030,7 +1036,7 @@ input, select, textarea, button {
 
 .page-wrapper {
   background: var(--paper);
-  box-shadow: 0 10px 40px rgba(26, 41, 64, 0.18), 0 2px 8px rgba(26, 41, 64, 0.1);
+  box-shadow: 0 14px 48px rgba(0, 0, 0, 0.45), 0 2px 10px rgba(0, 0, 0, 0.3);
   border-radius: 2px;
 }
 
@@ -1084,30 +1090,33 @@ body.grabbing * {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--ink-3);
+  color: #93a7bd;
   pointer-events: none;
   font-size: var(--font-md);
   user-select: none;
 }
 
-/* 16×16 pixel-art mascot, upscaled 16× with hard pixel edges */
+/* Pixel-art mascot (transparent bg): a dark-purple halo behind it fades
+   radially into the muted-blue canvas so the two backgrounds blend */
 .empty-mascot {
   width: 256px;
   height: 256px;
+  padding: 26px;
+  box-sizing: content-box;
   image-rendering: pixelated;
-  border-radius: 24px;
-  opacity: 0.92;
-  filter: drop-shadow(0 10px 24px rgba(26, 41, 64, 0.25));
+  background: radial-gradient(circle at 50% 46%, rgba(74, 59, 94, 0.85), rgba(64, 52, 84, 0.4) 55%, rgba(64, 52, 84, 0) 72%);
+  opacity: 0.95;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.35));
   user-select: none;
 }
 
 .workspace.drag-over .empty-state {
-  color: var(--accent);
+  color: var(--accent-bright);
 }
 
 .workspace.drag-over .empty-mascot {
   opacity: 1;
-  filter: drop-shadow(0 10px 28px rgba(62, 123, 214, 0.45));
+  filter: drop-shadow(0 12px 30px rgba(91, 147, 232, 0.5));
 }
 
 /* ── Canvas HUD (Scale / Page / Zoom) — glass pills at the very bottom of

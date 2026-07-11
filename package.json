@@ -13,6 +13,7 @@
     "vite": "^8.0.12"
   },
   "dependencies": {
+    "@fontsource-variable/space-grotesk": "^5.2.10",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.0.227"
   }

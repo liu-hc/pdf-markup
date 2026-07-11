@@ -46,15 +46,18 @@ properties, undo/redo, text/callout/dimension, split view and overlay all pass
 with a clean console.
 
 ### Theme (redesigned 2026-07-05, "liquid glass"; recolored 2026-07-11)
-Apple-style liquid glass over a full-bleed light drafting canvas. Muted-BLUE
-palette (the earlier indigo/violet is gone): heavy frost (`--glass-blur`
-36px), glass tint fills each pane's padding-box while a `--glass-bevel`
-gradient fills the 1px border ring (light-catching rim), and `--glass-edge`
-inner highlights suggest pane thickness with a cool refraction bounce along
-the bottom edge. Ribbon labels are near-white with a dark halo for contrast
-over the frost. The 16x16 pixel corgi (`public/corgi.png`) is the favicon
-and the 256px empty-state mascot (`image-rendering: pixelated`). Key
-structure:
+Apple-style liquid glass over a full-bleed MUTED DARK-BLUE drafting canvas
+(`--canvas`), muted-blue palette throughout (no indigo/violet): heavy frost
+(`--glass-blur` 36px), glass tint fills each pane's padding-box while a
+`--glass-bevel` gradient fills the 1px border ring (light-catching rim), and
+`--glass-edge` inner highlights suggest pane thickness with a cool refraction
+bounce along the bottom edge. UI type is Space Grotesk
+(`@fontsource-variable/space-grotesk`, imported in `main.ts`). Ribbon labels
+and tool icons are near-white with dark halos for contrast over the frost.
+The 16x16 pixel corgi is the favicon + menubar app mark
+(`public/corgi.png`) and, background-removed + EPX-upscaled to 64px
+(`public/corgi-hero.png`), the 256px empty-state mascot whose purple halo
+fades into the canvas. Key structure:
 
 - **The canvas fills the whole `.main-area`;** the ribbon, both side panels
   and the bottom HUD are absolutely-positioned frosted-glass overlays

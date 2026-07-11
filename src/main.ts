@@ -1,3 +1,4 @@
+import '@fontsource-variable/space-grotesk';
 import './styles/main.css';
 import { ensureAccess } from './ui/PassGate';
 import { Workspace } from './view/Workspace';

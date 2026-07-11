@@ -56,7 +56,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   root.className = 'app-shell';
   root.innerHTML = `
     <header class="menubar">
-      <div class="app-mark"><svg width="16" height="16" viewBox="0 0 20 20" fill="none"><rect x="2" y="1.5" width="10" height="13" rx="1.2" stroke="rgba(255,255,255,0.55)" stroke-width="1.3"/><rect x="8" y="5.5" width="10" height="13" rx="1.2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.85)" stroke-width="1.3"/><path d="M10 13.5l4.5-4.5 1.5 1.5-4.5 4.5L10 16z" fill="#fff"/></svg></div>
+      <div class="app-mark"><img src="/corgi.png" alt="Markup Studio" width="26" height="26"></div>
       <nav class="menu-nav">
         <div class="menu-item" data-menu="file">File<ul class="dropdown">
           <li data-action="new">New…</li>
