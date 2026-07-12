@@ -13,7 +13,9 @@ draw and measure on them, and saves the markups back into the PDF.
   controls are translucent frosted-glass overlays (backdrop blur + edge rim
   lights) floating over a full-bleed light drafting canvas, so the PDF shows
   through beneath them. Deep indigo-navy window chrome, violet glass document
-  rail, light glass inspector panel, monospaced UI type, vivid indigo accents.
+  rail, dark-glass inspector panel, Space Grotesk UI type, steel-blue accents.
+  Folded side panels peek out when the cursor brushes the canvas edge and
+  fold back a second after it leaves; the arrow buttons pin them open.
 
 ---
 
@@ -74,7 +76,12 @@ The active tool is shown in the status bar. After finishing a markup the app
 returns to the last Navigate tool (Select or Zoom).
 
 ### Navigate
-- **Flip** — page through the document; wheel turns pages.
+- **Flip** — page through the document like slides: one wheel gesture (or
+  PgUp/PgDn/arrow key in single-page mode) turns exactly one page, and the
+  viewport position carries over unchanged from page to page.
+- **Ctrl/⌘/Shift + wheel** zooms at the cursor on every tool; middle-drag
+  pans on every tool (closed-hand cursor while dragging). Drawing and
+  measuring tools show a crosshair cursor while armed.
 - **Zoom Page** — wheel to zoom; middle-drag (or Alt+drag) to pan in any
   direction; double middle-click resets to 100%.
 - **Select** — click a markup to select; drag to move; drag handles to resize;

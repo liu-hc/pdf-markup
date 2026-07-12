@@ -253,8 +253,6 @@ export interface AppState {
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelTab: 'bookmarks' | 'thumbnails';
-  rightPanelTab: 'properties' | 'totals';
-  snipBuffer: SnipMarkup | null;
 }
 
 export interface BookmarkNode {

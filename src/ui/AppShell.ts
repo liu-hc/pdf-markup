@@ -10,7 +10,7 @@ import {
 import type { ToolId, LineStyle, Markup } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, PAGE_SIZES, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
+import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocument, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
@@ -136,6 +136,8 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
         <div class="hud-page"><button class="page-prev">‹</button><span class="page-label">0/0</span><button class="page-next">›</button></div>
         <div class="hud-zoom"><button data-zoom="fit">Fit</button><button data-zoom="out">−</button><span class="zoom-label">100%</span><button data-zoom="in">+</button></div>
       </div>
+      <div class="panel-peek-zone left" aria-hidden="true"></div>
+      <div class="panel-peek-zone right" aria-hidden="true"></div>
       <div class="panel-edge-controls" aria-hidden="false">
         <button class="panel-toggle left-toggle" title="Toggle left panel">◀</button>
         <button class="panel-toggle right-toggle" title="Toggle right panel">▶</button>
@@ -151,6 +153,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   wirePanels(root, workspace);
   wireHUDs(root, workspace);
   wireDropZone(root);
+  _rerenderChrome = () => renderChrome(root, workspace, secondaryWorkspace);
   subscribe(() => renderChrome(root, workspace, secondaryWorkspace));
   renderChrome(root, workspace, secondaryWorkspace);
   // The panels hang below the floating ribbon, whose height is only known
@@ -749,14 +752,34 @@ function wirePanels(root: HTMLElement, _ws: Workspace): void {
   root.querySelector('.main-area')?.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.closest('.left-toggle')) {
+      peekCancel('left'); // the arrow pins/unpins — drop any transient peek
       setState({ leftPanelVisible: !getState().leftPanelVisible });
       return;
     }
     if (target.closest('.right-toggle')) {
+      peekCancel('right');
       setState({ rightPanelVisible: !getState().rightPanelVisible });
       return;
     }
   });
+
+  // Hover peek: brushing the canvas edge slides a folded panel out; leaving
+  // the panel folds it back after a beat. Pinned panels are unaffected.
+  for (const side of ['left', 'right'] as const) {
+    const zone = root.querySelector(`.panel-peek-zone.${side}`) as HTMLElement | null;
+    const panel = root.querySelector(`.${side}-panel`) as HTMLElement | null;
+    const visible = () => (side === 'left' ? getState().leftPanelVisible : getState().rightPanelVisible);
+    zone?.addEventListener('pointerenter', () => {
+      if (!visible()) peekShow(side);
+    });
+    zone?.addEventListener('pointerleave', () => peekHideSoon(side));
+    panel?.addEventListener('pointerenter', () => {
+      if (_peek[side]) peekShow(side); // cancel a pending fold while inside
+    });
+    panel?.addEventListener('pointerleave', () => {
+      if (!visible()) peekHideSoon(side);
+    });
+  }
 
   wirePanelResize(root);
 
@@ -844,16 +867,28 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   const ribbonEl = root.querySelector('.ribbon') as HTMLElement | null;
   const panelTop = (ribbonEl?.offsetHeight ?? 0) + 2 * GLASS_GAP;
 
+  // A panel shows when pinned open (state) OR while hover-peeking
+  const leftOut = state.leftPanelVisible || _peek.left;
+  const rightOut = state.rightPanelVisible || _peek.right;
   if (leftPanel) {
-    leftPanel.classList.toggle('collapsed', !state.leftPanelVisible);
-    leftPanel.style.width = state.leftPanelVisible ? `${state.leftPanelWidth}px` : '0';
+    leftPanel.classList.toggle('collapsed', !leftOut);
+    leftPanel.style.width = leftOut ? `${state.leftPanelWidth}px` : '0';
     leftPanel.style.top = `${panelTop}px`;
   }
   if (rightPanel) {
-    rightPanel.classList.toggle('collapsed', !state.rightPanelVisible);
-    rightPanel.style.width = state.rightPanelVisible ? `${state.rightPanelWidth}px` : '0';
+    rightPanel.classList.toggle('collapsed', !rightOut);
+    rightPanel.style.width = rightOut ? `${state.rightPanelWidth}px` : '0';
     rightPanel.style.top = `${panelTop}px`;
   }
+  // Peek hot zones arm only while the corresponding panel is folded
+  (root.querySelector('.panel-peek-zone.left') as HTMLElement | null)?.classList.toggle(
+    'active',
+    !state.leftPanelVisible,
+  );
+  (root.querySelector('.panel-peek-zone.right') as HTMLElement | null)?.classList.toggle(
+    'active',
+    !state.rightPanelVisible,
+  );
   if (leftToggle) {
     leftToggle.textContent = state.leftPanelVisible ? '◀' : '▶';
     leftToggle.title = state.leftPanelVisible ? 'Hide left panel' : 'Show left panel';
@@ -998,6 +1033,44 @@ let _thumbObserver: IntersectionObserver | null = null;
 let _thumbDocId: string | null = null;
 /** Signature (docId:pageCount) of the last-built overlay controls. */
 let _overlayBarKey = '';
+
+/* ── Collapsed-panel hover peek ────────────────────────────────────────────
+   When a side panel is folded, brushing the canvas edge slides it out
+   temporarily; it stays while the cursor is over it and folds back
+   PEEK_HIDE_MS after the cursor leaves. Manually opened panels (the arrow
+   buttons) are unaffected — they stay pinned. */
+const PEEK_HIDE_MS = 1000;
+const _peek = { left: false, right: false };
+const _peekTimers: { left: number | null; right: number | null } = { left: null, right: null };
+/** Re-runs renderChrome — set in buildAppShell where the deps live. */
+let _rerenderChrome: (() => void) | null = null;
+
+function peekShow(side: 'left' | 'right'): void {
+  const t = _peekTimers[side];
+  if (t !== null) clearTimeout(t);
+  _peekTimers[side] = null;
+  if (_peek[side]) return;
+  _peek[side] = true;
+  _rerenderChrome?.();
+}
+
+function peekHideSoon(side: 'left' | 'right'): void {
+  if (!_peek[side]) return;
+  const t = _peekTimers[side];
+  if (t !== null) clearTimeout(t);
+  _peekTimers[side] = window.setTimeout(() => {
+    _peekTimers[side] = null;
+    _peek[side] = false;
+    _rerenderChrome?.();
+  }, PEEK_HIDE_MS);
+}
+
+function peekCancel(side: 'left' | 'right'): void {
+  const t = _peekTimers[side];
+  if (t !== null) clearTimeout(t);
+  _peekTimers[side] = null;
+  _peek[side] = false;
+}
 /** The pdfDoc proxy the thumbnails were rendered from — page insert / delete /
  *  paste / rotate replace it, and the cached thumbs (keyed by index) go stale. */
 let _thumbPdfDoc: unknown = null;
@@ -1966,5 +2039,3 @@ function renderOverlayBar(root: HTMLElement): void {
   multiplyLabel.append(multiplyCb, document.createTextNode('Multiply'));
   bar.appendChild(multiplyLabel);
 }
-
-export { SWATCH_COLORS, PAGE_SIZES };

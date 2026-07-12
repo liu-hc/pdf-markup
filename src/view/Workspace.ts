@@ -6,7 +6,7 @@ import {
   updateActiveDoc,
   setCursorPagePoint,
 } from '../state/store';
-import { handlePointerDown, handlePointerMove, handlePointerUp, handleWheel, handleContextMenu } from '../tools/controller';
+import { handlePointerDown, handlePointerMove, handlePointerUp, handleWheel, handleContextMenu, cursorForTool } from '../tools/controller';
 
 /** Pages pre-rendered on each side of the current page (fit-level zoom only). */
 const PREFETCH_RADIUS = 2;
@@ -202,6 +202,11 @@ export class Workspace {
 
     this.hideEmptyState();
 
+    // Tool cursor (crosshair for drawing tools, hand for pan) applies the
+    // moment the tool changes, not only on the next mouse move
+    const toolCursor = cursorForTool(getState().activeTool);
+    if (this.contentEl.style.cursor !== toolCursor) this.contentEl.style.cursor = toolCursor;
+
     if (doc.viewMode === 'single') {
       this.layoutSinglePage(zoomChanged);
     } else {
@@ -286,11 +291,17 @@ export class Workspace {
   }
 
   private mountSingleWrapper(pv: PageView): void {
+    // Preserve the viewport across page flips — the swap momentarily empties
+    // the scroll content, which would otherwise clamp scrollLeft/Top and make
+    // each flip drift slightly. Same-size pages land in exactly the same spot.
+    const { scrollLeft, scrollTop } = this.scrollEl;
     this.contentEl.innerHTML = '';
     const wrapper = document.createElement('div');
     wrapper.className = 'page-wrapper single';
     wrapper.appendChild(pv.el);
     this.contentEl.appendChild(wrapper);
+    this.scrollEl.scrollLeft = scrollLeft;
+    this.scrollEl.scrollTop = scrollTop;
   }
 
   /** The expensive pass: rasterize the current page (base + visible-region

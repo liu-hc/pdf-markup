@@ -6,7 +6,6 @@ import {
   updateActiveDoc,
   updateMarkup,
   replaceMarkups,
-  setState,
   returnToNavTool,
 } from '../state/store';
 import type {
@@ -130,6 +129,15 @@ function setGrabbing(on: boolean): void {
   document.body.classList.toggle('grabbing', on);
 }
 
+/** Canvas cursor for the active tool: a crosshair while any drawing/measure
+ *  tool is armed, an open hand for Pan, the plain arrow for navigation. */
+export function cursorForTool(tool: ToolId): string {
+  if (tool === 'pan') return 'grab';
+  if (tool === 'flip' || tool === 'zoom' || tool === 'select') return '';
+  if (tool === 'highlighter') return MARKER_CURSOR; // refined to I-beam over text on hover
+  return 'crosshair';
+}
+
 export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
   const doc = getActiveDoc();
   if (!doc) return;
@@ -152,7 +160,8 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
       scrollLeft: ws.scrollEl.scrollLeft,
       scrollTop: ws.scrollEl.scrollTop,
     };
-    if (tool === 'pan') ws.contentEl.style.cursor = 'grabbing';
+    // Closed hand while panning — middle-drag included, on every tool
+    ws.contentEl.style.cursor = 'grabbing';
     e.preventDefault();
     return;
   }
@@ -324,8 +333,9 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     ws.contentEl.style.cursor = panning ? 'grabbing' : 'grab';
     return;
   }
-  // Leaving the highlighter / pan: drop the custom cursor
-  if (ws.contentEl.style.cursor) ws.contentEl.style.cursor = '';
+  // Keep the tool's cursor applied (crosshair for draw tools, arrow for nav)
+  const wanted = cursorForTool(tool);
+  if (ws.contentEl.style.cursor !== wanted) ws.contentEl.style.cursor = wanted;
 
   // Callout: live leader/box preview between clicks
   if (tool === 'callout' && calloutDraw) {
@@ -397,7 +407,7 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   if (panning) {
     panning = false;
     // Back to the open hand if we're still on the Pan tool, else clear it
-    ws.contentEl.style.cursor = getState().activeTool === 'pan' ? 'grab' : '';
+    ws.contentEl.style.cursor = cursorForTool(getState().activeTool);
     if (e.button === 1) {
       const now = Date.now();
       if (now - lastClick < 300) ws.fit100();
@@ -663,12 +673,21 @@ function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
   applyMarkupChange('Highlight text', [...docMarkups(), ...markups]);
 }
 
+/** Wheel-flip accumulator: trackpads emit dozens of small deltas per swipe —
+ *  gather them and turn ONE gesture into ONE page, like presentation slides. */
+let _flipAccum = 0;
+let _lastFlip = 0;
+const FLIP_DELTA = 60;
+const FLIP_COOLDOWN_MS = 220;
+
 export function handleWheel(e: WheelEvent, ws: Workspace): void {
   const tool = getState().activeTool;
   const doc = getActiveDoc();
   if (!doc) return;
 
-  if (tool === 'zoom' || e.ctrlKey) {
+  // Ctrl / ⌘ / Shift + wheel zooms at the cursor on EVERY tool (Ctrl+wheel is
+  // also what trackpad pinch gestures send), as does the Zoom tool itself.
+  if (tool === 'zoom' || e.ctrlKey || e.metaKey || e.shiftKey) {
     e.preventDefault();
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     const rect = ws.scrollEl.getBoundingClientRect();
@@ -680,8 +699,17 @@ export function handleWheel(e: WheelEvent, ws: Workspace): void {
   }
 
   if (tool === 'flip') {
-    if (e.deltaY > 0) ws.goToPage(Math.min(doc.pageCount - 1, doc.currentPage + 1));
-    else if (e.deltaY < 0) ws.goToPage(Math.max(0, doc.currentPage - 1));
+    // Flip is discrete: swallow the scroll entirely so the sheet never drifts,
+    // and step exactly one page per gesture.
+    e.preventDefault();
+    const now = performance.now();
+    if (now - _lastFlip < FLIP_COOLDOWN_MS) return;
+    _flipAccum += e.deltaY;
+    if (Math.abs(_flipAccum) < FLIP_DELTA) return;
+    const dir = _flipAccum > 0 ? 1 : -1;
+    _flipAccum = 0;
+    _lastFlip = now;
+    ws.goToPage(Math.max(0, Math.min(doc.pageCount - 1, doc.currentPage + dir)));
   }
 }
 
@@ -1183,7 +1211,6 @@ async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace
   };
   // The snip goes to the clipboard only — paste (Ctrl+V) places it with its
   // lower-left corner at the cursor.
-  setState({ snipBuffer: snip as never });
   updateActiveDoc((d) => ({ ...d, clipboard: [snip] }));
   returnToNavTool();
   // Best-effort: also put the PNG on the system clipboard
@@ -1779,6 +1806,28 @@ export function setupKeyboardShortcuts(): void {
     }
 
     const mod = e.metaKey || e.ctrlKey;
+
+    // PgUp / PgDn / arrows page through the document like slides (single mode)
+    if (!mod) {
+      const doc = getActiveDoc();
+      if (doc && doc.viewMode === 'single') {
+        const step =
+          e.key === 'PageDown' || e.key === 'ArrowDown' || e.key === 'ArrowRight'
+            ? 1
+            : e.key === 'PageUp' || e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+              ? -1
+              : 0;
+        if (step) {
+          e.preventDefault();
+          updateActiveDoc((d) => ({
+            ...d,
+            currentPage: Math.max(0, Math.min(d.pageCount - 1, d.currentPage + step)),
+          }));
+          return;
+        }
+      }
+    }
+
     if (mod && e.key === 's') {
       e.preventDefault();
       const doc = getActiveDoc();

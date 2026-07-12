@@ -15,8 +15,6 @@ let state: AppState = {
   leftPanelWidth: 220,
   rightPanelWidth: 220,
   leftPanelTab: 'thumbnails',
-  rightPanelTab: 'properties',
-  snipBuffer: null,
 };
 
 const listeners = new Set<Listener>();

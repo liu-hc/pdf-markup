@@ -1,7 +1,7 @@
 /* ══════════════════════════════════════════════════════════════════════════
    Markup Studio — Design System
    Muted-blue chrome, cool frosted-glass overlays with beveled light-catching
-   edges, muted dark-blue drafting canvas, white inspector panel.
+   edges, muted dark-blue drafting canvas, dark-glass inspector panel.
    Space Grotesk UI type.
    ══════════════════════════════════════════════════════════════════════════ */
 
@@ -32,7 +32,8 @@
   --rail-text:   #dbe6f2;
   --rail-text-2: #a6bad2;
 
-  /* Muted dark-blue drafting canvas + white inspector panel */
+  /* Muted dark-blue drafting canvas (ink vars are for light surfaces like
+     the white thumbnail cards; the inspector overrides them to light) */
   --canvas:        #27313f;
   --paper:         #ffffff;
   --panel-light:   #f7fafc;
@@ -56,7 +57,6 @@
   --glass-dark:   rgba(18, 28, 44, 0.38);
   --glass-rail-a: rgba(52, 76, 106, 0.42);
   --glass-rail-b: rgba(26, 40, 60, 0.4);
-  --glass-light:  rgba(245, 249, 252, 0.78);
   --glass-blur:   blur(36px) saturate(150%);
   --glass-radius: 16px;
   /* Gradient border: bright light-catch top-left, faint along the sides,
@@ -117,9 +117,9 @@ input, select, textarea, button {
 ::-webkit-scrollbar-thumb  { background: var(--chrome-border-2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 
-/* Light-surface scrollbars (right panel) */
-.right-panel ::-webkit-scrollbar-thumb { background: #c8d4e0; }
-.right-panel ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+/* Inspector scrollbars (dark glass) */
+.right-panel ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); }
+.right-panel ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.4); }
 
 /* The main canvas scrollbar is wider so it's easy to grab */
 .workspace-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
@@ -713,12 +713,12 @@ input, select, textarea, button {
     var(--glass-bevel) border-box;
 }
 
-/* Light glass inspector panel */
+/* Inspector panel — same dark liquid glass as the ribbon and the rail */
 .right-panel {
   right: 8px;
   border: 1px solid transparent;
   background:
-    linear-gradient(var(--glass-light), var(--glass-light)) padding-box,
+    linear-gradient(var(--glass-dark), var(--glass-dark)) padding-box,
     var(--glass-bevel) border-box;
 }
 
@@ -802,14 +802,13 @@ input, select, textarea, button {
   box-shadow: none;
 }
 
-/* The toggle tucked inside the light inspector panel matches its surface */
-.right-panel:not(.collapsed) ~ .panel-edge-controls .right-toggle.inside-panel,
+/* The toggle tucked inside the inspector panel blends with its dark glass */
 .panel-toggle.right-toggle.inside-panel {
-  background: #eceef8;
-  border-color: var(--panel-border);
-  color: var(--ink-2);
+  background: rgba(11, 20, 34, 0.35);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-2);
 }
-.panel-toggle.right-toggle.inside-panel:hover { color: var(--ink); }
+.panel-toggle.right-toggle.inside-panel:hover { color: var(--text); }
 
 /* The toggle tucked inside the violet rail blends with it */
 .panel-toggle.left-toggle.inside-panel {
@@ -942,6 +941,20 @@ input, select, textarea, button {
   z-index: 30;
   pointer-events: none;
 }
+
+/* Invisible hover strips along the canvas edges — armed only while the
+   corresponding panel is folded; brushing them peeks the panel out. */
+.panel-peek-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  z-index: 24;
+  display: none;
+}
+.panel-peek-zone.active { display: block; }
+.panel-peek-zone.left { left: 0; }
+.panel-peek-zone.right { right: 0; }
 
 .viewer-stack.split-v { flex-direction: row; }
 .viewer-stack.split-h { flex-direction: column; }
@@ -1103,7 +1116,8 @@ body.grabbing * {
 .empty-mascot {
   width: 256px;
   height: 256px;
-  opacity: 0.97;
+  /* Half-transparent so it recedes into the muted-blue canvas */
+  opacity: 0.5;
   filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.35));
   user-select: none;
 }
@@ -1113,7 +1127,7 @@ body.grabbing * {
 }
 
 .workspace.drag-over .empty-mascot {
-  opacity: 1;
+  opacity: 0.85;
   filter: drop-shadow(0 12px 30px rgba(91, 147, 232, 0.5));
 }
 
@@ -1182,6 +1196,17 @@ body.grabbing * {
 }
 
 /* ── Right panel — properties & markups ────────────────────────────────── */
+/* Dark-glass inspector: the ink scale flips to light INSIDE this panel so
+   every content rule below (labels, totals, markups list) reads with high
+   contrast on the frost. Rules that used ink as a background are overridden
+   individually further down. */
+.right-panel {
+  --ink: #f0f4fa;
+  --ink-2: #c3cfdf;
+  --ink-3: #8fa2ba;
+  --panel-border: rgba(255, 255, 255, 0.14);
+}
+
 .properties-panel {
   padding: 10px;
   color: var(--ink-2);
@@ -1191,12 +1216,13 @@ body.grabbing * {
   padding: 0;
 }
 
-/* Header band — markup type + page, on a dark navy card */
+/* Header band — markup type + page, on a darker inset glass card */
 .prop-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--ink);
+  background: rgba(11, 20, 34, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 12px;
@@ -1259,11 +1285,11 @@ body.grabbing * {
   margin: 12px 0;
 }
 
-/* Selects read as navy value chips */
+/* Selects read as dark value chips on the glass */
 .prop-block select {
-  background: var(--ink);
-  border: 1px solid var(--ink);
-  color: #fff;
+  background: var(--chrome-3);
+  border: 1px solid var(--chrome-border-2);
+  color: var(--text);
   border-radius: 6px;
   padding: 2px 6px;
   font-size: var(--font-sm);
@@ -1272,9 +1298,9 @@ body.grabbing * {
 }
 
 .prop-block input[type='number'] {
-  background: #fff;
-  border: 1px solid var(--panel-border);
-  color: var(--ink);
+  background: rgba(11, 20, 34, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--text);
   border-radius: 6px;
   padding: 2px 6px;
   font-size: var(--font-sm);
@@ -1298,7 +1324,7 @@ body.grabbing * {
   width: 16px;
   height: 16px;
   border-radius: 5px;
-  border: 1px solid rgba(26, 41, 64, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   cursor: pointer;
   padding: 0;
   transition: transform 0.08s ease, border-color 0.08s ease;
@@ -1337,7 +1363,7 @@ body.grabbing * {
   -webkit-appearance: none;
   appearance: none;
   height: 3px;
-  background: #d5d9ea;
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 2px;
   outline: none;
 }
@@ -1442,11 +1468,11 @@ body.grabbing * {
 }
 
 .markups-list li:hover {
-  background: #eceef8;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .markups-list li.selected {
-  background: var(--ink);
+  background: rgba(62, 123, 214, 0.32);
   color: var(--text-2);
 }
 
@@ -1456,7 +1482,7 @@ body.grabbing * {
   height: 9px;
   border-radius: 3px;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1px rgba(26, 41, 64, 0.15);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 
 /* Item name stays readable; the id is dimmed so it doesn't compete */
@@ -1503,7 +1529,7 @@ body.grabbing * {
 .markups-list li:hover .mk-lock { opacity: 1; }
 
 .mk-lock:hover {
-  background: rgba(26, 41, 64, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--ink);
 }
 
