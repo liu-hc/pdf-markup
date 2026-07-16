@@ -23,7 +23,8 @@ draw and measure on them, and saves the markups back into the PDF.
 
 Top to bottom:
 
-1. **Menu bar** — `File`, `Edit`, `View`, `Help`, the active filename chip, and a
+1. **Menu bar** — `File`, `Edit`, `View`, `Markup`, `Help`, the document tabs
+   (the current file shows an accent border and a green dot), and a
    `Save` button.
 2. **Document tab strip** — one tab per open document (with a × close button) and
    a **drag-and-drop zone**: drop a PDF / JPEG / PNG here to open it as an

@@ -71,8 +71,9 @@ fades into the canvas. Key structure:
   overlays (subtracts panel widths / ribbon / HUD).
 - The viewer controls (Scale chip, page ‹ n / m ›, Fit − % +) are glass pills
   centered at the very bottom of the canvas (`.canvas-hud`).
-- Overlay + Snip sit in their own **Edit** ribbon group; filename chip is
-  centered in the menubar.
+- Overlay + Snip sit in their own **Edit** ribbon group; document tabs sit
+  inline in the menubar (active tab: accent border + green dot; hollow dot
+  when saved). Overlays are configured per host page (overlaysByPage).
 - Properties panel: navy header band (markup type + page, icon reused from
   the ribbon `TOOL_ICONS` via `PROP_ICON`), then Line / Infill / Text color
   wells — each an independent per-markup override of the page defaults.

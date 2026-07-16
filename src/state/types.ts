@@ -241,7 +241,9 @@ export interface PdfDocumentState {
   splitMode: SplitMode;
   splitRatio: number;
   overlayEnabled: boolean;
-  overlays: [OverlaySlot | null, OverlaySlot | null];
+  /** Overlay slots per HOST page — an overlay configured while viewing page
+   *  N shows only on page N; other pages keep their own configurations. */
+  overlaysByPage: Record<number, [OverlaySlot | null, OverlaySlot | null]>;
   /** Composite overlay pages onto the base page Photoshop-Multiply style. */
   overlayMultiply: boolean;
   clipboard: Markup[] | null;

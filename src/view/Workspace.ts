@@ -547,19 +547,21 @@ export class Workspace {
     if (!doc?.pdfDoc) return;
     if (this._settling && !force) return; // wait for the crisp pass
     const pv = this.pageViews.get(doc.currentPage);
+    // Overlays belong to the page they were configured on
+    const slots = doc.overlaysByPage[doc.currentPage] ?? [null, null];
     const key = [
       doc.id,
       doc.currentPage,
       pv ? pv.getRenderScale().toFixed(4) : '0',
       doc.overlayEnabled,
       doc.overlayMultiply,
-      JSON.stringify(doc.overlays),
+      JSON.stringify(slots),
     ].join('|');
     if (!force && key === this._lastOverlayKey) return;
     this._lastOverlayKey = key;
     for (const [i, view] of this.pageViews) {
       if (doc.overlayEnabled && i === doc.currentPage) {
-        void view.renderOverlays(doc.pdfDoc, doc.overlays, doc.overlayMultiply);
+        void view.renderOverlays(doc.pdfDoc, slots, doc.overlayMultiply);
       } else {
         view.clearOverlays();
       }

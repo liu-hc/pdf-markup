@@ -72,7 +72,7 @@ export function createEmptyDoc(id: string, filename: string): PdfDocumentState {
     splitMode: 'none',
     splitRatio: 0.5,
     overlayEnabled: false,
-    overlays: [null, null],
+    overlaysByPage: {},
     overlayMultiply: false,
     clipboard: null,
     bookmarks: [],

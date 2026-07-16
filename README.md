@@ -10,7 +10,7 @@ frosted-glass overlays, so the drawing shows through, blurred.
 
 ![The Markup Studio workspace](docs/graphics/workspace.png)
 
-1. **Menu bar** — File / Edit / View / Markup / Help, document tabs, filename chip, Save
+1. **Menu bar** — File / Edit / View / Markup / Help, document tabs (current file = accent border + green dot), Save
 2. **Canvas** — the sheet fills the window and scrolls under the glass chrome
 3. **Glass ribbon** — every tool plus the per-page defaults (see below)
 4. **Document rail** — page thumbnails and bookmarks

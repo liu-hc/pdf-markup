@@ -8,7 +8,7 @@ import {
   closeDocument,
   uid,
 } from '../state/store';
-import type { ToolId, LineStyle, Markup, BookmarkItem } from '../state/types';
+import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
@@ -103,7 +103,6 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
         </ul></div>
       </nav>
       <div class="doc-tabs"></div>
-      <div class="file-chip"><svg width="13" height="15" viewBox="0 0 13 15" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 1.5h6.5l3.5 3.5v8.5h-10z"/><path d="M8 1.5V5h3.5"/></svg><span class="filename">Untitled</span><span class="dirty-dot"></span></div>
       <button class="btn-save" title="Save (Ctrl+S)">Save</button>
     </header>
     <div class="main-area">
@@ -454,7 +453,7 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>The workspace</h4>
       ${fig(guideWorkspace, 'The Markup Studio workspace')}
       <ol class="help-legend">
-        <li><strong>Menu bar</strong> — File / Edit / View / Markup / Help, document tabs, filename chip, Save</li>
+        <li><strong>Menu bar</strong> — File / Edit / View / Markup / Help, document tabs (the highlighted tab with the green dot is the current file), Save</li>
         <li><strong>Canvas</strong> — the sheet fills the window and scrolls under the glass chrome</li>
         <li><strong>Glass ribbon</strong> — every tool plus the per-page defaults</li>
         <li><strong>Document rail</strong> — page thumbnails and bookmarks</li>
@@ -764,6 +763,67 @@ function setBookmarks(next: BookmarkItem[]): void {
   updateActiveDoc((d) => ({ ...d, bookmarks: next, dirty: true }));
 }
 
+function renameBookmark(id: string, title: string): void {
+  const d = getActiveDoc();
+  if (!d || !title.trim()) return;
+  const t = title.trim();
+  setBookmarks(
+    d.bookmarks.map((b) =>
+      b.id === id
+        ? { ...b, title: t }
+        : b.children?.some((c) => c.id === id)
+          ? { ...b, children: b.children.map((c) => (c.id === id ? { ...c, title: t } : c)) }
+          : b,
+    ),
+  );
+}
+
+/** Detects the second quick click on the same row (manual — the DOM row can
+ *  be rebuilt between clicks, which resets the browser's own counter). */
+let _bmLastClick = { id: '', time: 0 };
+
+/** Swap a bookmark/group row's title for an in-place rename input. */
+function startBookmarkRename(id: string): void {
+  const row = document.querySelector(`.bm-row[data-id="${id}"]`) as HTMLElement | null;
+  const titleEl = row?.querySelector('.bm-title') as HTMLElement | null;
+  if (!row || !titleEl || row.querySelector('.bm-rename-input')) return;
+  const old = titleEl.textContent ?? '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'bm-rename-input';
+  input.value = old;
+  titleEl.replaceWith(input);
+  // Keep row drag/click and global shortcuts away from the input
+  for (const ev of ['pointerdown', 'pointerup', 'pointermove', 'dblclick', 'contextmenu']) {
+    input.addEventListener(ev, (e) => e.stopPropagation());
+  }
+  let done = false;
+  const finish = (commit: boolean): void => {
+    if (done) return;
+    done = true;
+    const value = input.value;
+    // Swap the title span back FIRST — panel rebuilds are suppressed while a
+    // rename input exists, so a lingering input would freeze the whole tree
+    const span = document.createElement('span');
+    span.className = 'bm-title';
+    span.textContent = commit && value.trim() ? value.trim() : old;
+    input.replaceWith(span);
+    if (commit && value.trim() && value.trim() !== old) {
+      renameBookmark(id, value); // state change re-renders the panel
+    } else {
+      _rerenderChrome?.(); // restore the plain title row
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.focus();
+  input.select();
+}
+
 /** Remove `id` from the (2-level) bookmark tree. Returns [next, removed]. */
 function removeBookmarkById(items: BookmarkItem[], id: string): [BookmarkItem[], BookmarkItem | null] {
   let removed: BookmarkItem | null = null;
@@ -784,6 +844,8 @@ function removeBookmarkById(items: BookmarkItem[], id: string): [BookmarkItem[],
 }
 
 function renderBookmarksPanel(content: HTMLElement, ws: Workspace): void {
+  // Never rebuild the tree out from under an active in-place rename
+  if (content.querySelector('.bm-rename-input')) return;
   const doc = getActiveDoc();
   content.innerHTML = '';
   const wrap = document.createElement('div');
@@ -876,19 +938,10 @@ function renderBookmarksPanel(content: HTMLElement, ws: Workspace): void {
         } else if (rowEl) {
           const id = rowEl.dataset.id!;
           if (action === 'rename') {
-            const [, item] = removeBookmarkById(d.bookmarks, id);
-            const name = prompt('Name', item?.title ?? '');
-            if (name?.trim()) {
-              setBookmarks(
-                d.bookmarks.map((b) =>
-                  b.id === id
-                    ? { ...b, title: name.trim() }
-                    : b.children?.some((c) => c.id === id)
-                      ? { ...b, children: b.children.map((c) => (c.id === id ? { ...c, title: name.trim() } : c)) }
-                      : b,
-                ),
-              );
-            }
+            // In-place rename — start it after the menu has closed
+            close();
+            requestAnimationFrame(() => startBookmarkRename(id));
+            return;
           } else if (action === 'delete') {
             const [next] = removeBookmarkById(d.bookmarks, id);
             setBookmarks(next);
@@ -988,6 +1041,15 @@ function wireBookmarkRow(
       row.removeEventListener('pointerup', onUp);
       hoverGroup?.classList.remove('bm-drop-target');
       if (!dragging) {
+        // Second quick click on the same row → rename in place (manual
+        // double-click detection: the row DOM may rebuild between clicks)
+        const now = performance.now();
+        const isDouble = _bmLastClick.id === item.id && now - _bmLastClick.time < 400;
+        _bmLastClick = { id: item.id, time: now };
+        if (isDouble) {
+          startBookmarkRename(item.id);
+          return;
+        }
         // Plain click: navigate to a bookmark, fold/unfold a group
         const d = getActiveDoc();
         if (!d) return;
@@ -1278,10 +1340,6 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     }
   }
 
-  const filename = root.querySelector('.filename')!;
-  filename.textContent = doc?.filename ?? 'Untitled';
-  root.querySelector('.dirty-dot')?.classList.toggle('saved', !doc?.dirty);
-
   renderDocTabs(root);
   renderLeftPanel(root, ws);
   renderRightPanel(root);
@@ -1310,7 +1368,9 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   // an open dropdown isn't yanked out from under the user.
   const overlayOn = doc?.overlayEnabled ?? false;
   root.querySelector('.overlay-bar')?.classList.toggle('hidden', !overlayOn);
-  const overlayBarKey = overlayOn && doc ? `${doc.id}:${doc.pageCount}` : '';
+  // Rebuild when the page changes too — the controls edit the CURRENT page's
+  // overlay slots, so they must reflect the page being viewed
+  const overlayBarKey = overlayOn && doc ? `${doc.id}:${doc.pageCount}:${doc.currentPage}` : '';
   if (overlayBarKey !== _overlayBarKey) {
     _overlayBarKey = overlayBarKey;
     if (overlayOn) renderOverlayBar(root);
@@ -1349,9 +1409,17 @@ function renderDocTabs(root: HTMLElement): void {
   const tabs = root.querySelector('.doc-tabs')!;
   tabs.innerHTML = '';
   for (const doc of getState().documents) {
+    const active = doc.id === getState().activeDocId;
     const tab = document.createElement('button');
-    tab.className = 'doc-tab' + (doc.id === getState().activeDocId ? ' active' : '');
-    tab.textContent = doc.filename;
+    tab.className = 'doc-tab' + (active ? ' active' : '');
+    tab.title = doc.filename + (doc.dirty ? ' — unsaved changes' : '');
+    // Green dot marks the CURRENT file (hollow when its changes are saved)
+    if (active) {
+      const dot = document.createElement('span');
+      dot.className = 'tab-dot' + (doc.dirty ? '' : ' saved');
+      tab.appendChild(dot);
+    }
+    tab.appendChild(document.createTextNode(doc.filename));
     tab.addEventListener('click', () => setState({ activeDocId: doc.id }));
     const close = document.createElement('span');
     close.className = 'tab-close';
@@ -2354,6 +2422,21 @@ function renderOverlayBar(root: HTMLElement): void {
   const bar = root.querySelector('.overlay-bar .overlay-controls');
   if (!bar || !doc?.overlayEnabled) return;
   bar.innerHTML = '';
+  // Overlays are configured PER PAGE: these controls edit the slots of the
+  // page being viewed right now
+  const hostPage = doc.currentPage;
+  const slots = doc.overlaysByPage[hostPage] ?? [null, null];
+  const writeSlot = (slot: number, value: OverlaySlot | null): void => {
+    updateActiveDoc((d) => {
+      const cur = d.overlaysByPage[hostPage] ?? [null, null];
+      const next: [OverlaySlot | null, OverlaySlot | null] = [cur[0], cur[1]];
+      next[slot] = value;
+      const overlaysByPage = { ...d.overlaysByPage };
+      if (next[0] === null && next[1] === null) delete overlaysByPage[hostPage];
+      else overlaysByPage[hostPage] = next;
+      return { ...d, overlaysByPage };
+    });
+  };
   for (let slot = 0; slot < 2; slot++) {
     const row = document.createElement('div');
     row.className = 'overlay-slot';
@@ -2361,7 +2444,7 @@ function renderOverlayBar(root: HTMLElement): void {
     select.innerHTML = `<option value="">— Page —</option>${Array.from({ length: doc.pageCount }, (_, i) => `<option value="${i}">Page ${i + 1}</option>`).join('')}`;
     const opacity = document.createElement('select');
     opacity.innerHTML = ['20', '40', '60', '80'].map((v) => `<option value="${v}">${v}%</option>`).join('');
-    const current = doc.overlays[slot];
+    const current = slots[slot];
     if (current) {
       select.value = String(current.pageIndex);
       opacity.value = String(Math.round(current.opacity * 100));
@@ -2371,21 +2454,14 @@ function renderOverlayBar(root: HTMLElement): void {
       // which would wrongly select page 1, so check for empty string first.
       const cleared = select.value === '';
       const pageIndex = Number(select.value);
-      updateActiveDoc((d) => {
-        const overlays = [...d.overlays] as typeof d.overlays;
-        overlays[slot] = !cleared && Number.isFinite(pageIndex)
-          ? { pageIndex, opacity: Number(opacity.value) / 100 }
-          : null;
-        return { ...d, overlays };
-      });
+      writeSlot(
+        slot,
+        !cleared && Number.isFinite(pageIndex) ? { pageIndex, opacity: Number(opacity.value) / 100 } : null,
+      );
     });
     opacity.addEventListener('change', () => {
-      updateActiveDoc((d) => {
-        const overlays = [...d.overlays] as typeof d.overlays;
-        const cur = overlays[slot];
-        if (cur) overlays[slot] = { ...cur, opacity: Number(opacity.value) / 100 };
-        return { ...d, overlays };
-      });
+      const cur = (getActiveDoc()?.overlaysByPage[hostPage] ?? [null, null])[slot];
+      if (cur) writeSlot(slot, { ...cur, opacity: Number(opacity.value) / 100 });
     });
     row.append(select, opacity);
     bar.appendChild(row);

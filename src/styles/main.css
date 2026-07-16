@@ -249,49 +249,6 @@ input, select, textarea, button {
   border-radius: 0;
 }
 
-/* Filename chip — centered in the menubar */
-.file-chip {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 14px;
-  background: var(--chrome-3);
-  border: 1px solid var(--chrome-border-2);
-  border-radius: 9px;
-  font-size: var(--font-md);
-  max-width: 320px;
-  overflow: hidden;
-}
-
-.file-chip svg {
-  flex-shrink: 0;
-  display: block;
-  opacity: 0.75;
-}
-
-.filename {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-
-.dirty-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dirty);
-  flex-shrink: 0;
-  transition: background var(--t);
-}
-
-.dirty-dot.saved {
-  background: var(--saved);
-}
-
 .btn-save {
   margin-left: auto;
   background: linear-gradient(135deg, var(--accent-bright), var(--accent));
@@ -341,10 +298,28 @@ input, select, textarea, button {
   background: var(--hover);
 }
 
+/* Current file: accent border highlight + green dot */
 .doc-tab.active {
   background: var(--chrome-3);
   color: var(--text);
-  border-color: var(--chrome-border-2);
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 1px var(--accent-dim), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dirty);
+  box-shadow: 0 0 5px rgba(143, 211, 168, 0.6);
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+/* Saved (no pending changes): the dot goes hollow */
+.tab-dot.saved {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dirty);
 }
 
 .tab-close {
@@ -912,6 +887,20 @@ input, select, textarea, button {
   flex-shrink: 0;
   font-size: var(--font-xs);
   color: var(--rail-text-2);
+}
+
+/* In-place rename input, swapped in for the row title */
+.bm-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(11, 20, 34, 0.5);
+  border: 1px solid var(--accent-border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-family: inherit;
+  padding: 1px 6px;
+  outline: none;
 }
 
 .bm-row.bm-dragging { opacity: 0.3; }
