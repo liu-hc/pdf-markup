@@ -136,7 +136,8 @@ Tuned for multi-MB vector sheets (tested with a 31MB / 53-page ARCH D set):
 - Multi-doc tabs, split view with draggable divider, overlay bar, raster snip v1.
 
 ## Known limitations / what remains
-1. The Bookmarks tab is a placeholder (PDF outline not parsed yet); overlay
+1. User bookmarks (groups, drag-reorder, metadata-persisted) are in; the
+   PDF's own outline is still not imported as bookmarks; overlay
    page selection is by page number, not bookmark name.
 2. PDF export of complex markups (callout elbow, dimension ticks/labels,
    dashed styles, measure labels) is simplified relative to on-screen

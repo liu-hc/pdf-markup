@@ -6,8 +6,9 @@ import {
   setActiveTool,
   updateActiveDoc,
   closeDocument,
+  uid,
 } from '../state/store';
-import type { ToolId, LineStyle, Markup } from '../state/types';
+import type { ToolId, LineStyle, Markup, BookmarkItem } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
@@ -101,10 +102,10 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="help">User Guide</li>
         </ul></div>
       </nav>
+      <div class="doc-tabs"></div>
       <div class="file-chip"><svg width="13" height="15" viewBox="0 0 13 15" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 1.5h6.5l3.5 3.5v8.5h-10z"/><path d="M8 1.5V5h3.5"/></svg><span class="filename">Untitled</span><span class="dirty-dot"></span></div>
       <button class="btn-save" title="Save (Ctrl+S)">Save</button>
     </header>
-    <div class="doc-tabs"></div>
     <div class="main-area">
       <div class="center-column">
         <div class="viewer-stack">
@@ -126,9 +127,17 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
       <aside class="right-panel">
         <div class="panel-resizer right-resizer" title="Drag to resize"></div>
         <div class="panel-inner">
-          <div class="panel-content properties-panel"></div>
-          <div class="totals-block"></div>
-          <div class="markups-list"><h4>Markups</h4><ul></ul></div>
+          <div class="panel-tabs right-tabs"><button data-rtab="properties" class="active">Properties</button><button data-rtab="search">Search</button></div>
+          <div class="right-tab-properties">
+            <div class="panel-content properties-panel"></div>
+            <div class="totals-block"></div>
+            <div class="markups-list"><h4>Markups</h4><ul></ul></div>
+          </div>
+          <div class="right-tab-search hidden">
+            <input type="search" class="search-input" placeholder="Search document…" spellcheck="false">
+            <div class="search-status"></div>
+            <ul class="search-results"></ul>
+          </div>
         </div>
       </aside>
       <div class="canvas-hud">
@@ -153,6 +162,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   wirePanels(root, workspace);
   wireHUDs(root, workspace);
   wireDropZone(root);
+  wireSearch(root, workspace);
   _rerenderChrome = () => renderChrome(root, workspace, secondaryWorkspace);
   subscribe(() => renderChrome(root, workspace, secondaryWorkspace));
   renderChrome(root, workspace, secondaryWorkspace);
@@ -742,6 +752,351 @@ function wireRibbon(root: HTMLElement): void {
   snipBtn.addEventListener('click', () => setActiveTool('snip'));
 }
 
+/* ── Bookmarks panel ───────────────────────────────────────────────────────
+   User bookmarks, one level of foldable groups. Right-click adds bookmarks
+   (current page) and groups; rows drag to reorder, and dropping a bookmark
+   onto a group header files it inside. Saved with the PDF metadata. */
+
+const BM_ICON = `<svg width="11" height="12" viewBox="0 0 11 12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 1.5h7v9.5L5.5 8.6 2 11z"/></svg>`;
+const GROUP_ICON = `<svg width="12" height="11" viewBox="0 0 12 11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M1.5 2.5h3l1 1.4h5v5.6h-9z"/></svg>`;
+
+function setBookmarks(next: BookmarkItem[]): void {
+  updateActiveDoc((d) => ({ ...d, bookmarks: next, dirty: true }));
+}
+
+/** Remove `id` from the (2-level) bookmark tree. Returns [next, removed]. */
+function removeBookmarkById(items: BookmarkItem[], id: string): [BookmarkItem[], BookmarkItem | null] {
+  let removed: BookmarkItem | null = null;
+  const next: BookmarkItem[] = [];
+  for (const it of items) {
+    if (it.id === id) {
+      removed = it;
+      continue;
+    }
+    if (it.children?.some((c) => c.id === id)) {
+      removed = it.children.find((c) => c.id === id)!;
+      next.push({ ...it, children: it.children.filter((c) => c.id !== id) });
+      continue;
+    }
+    next.push(it);
+  }
+  return [next, removed];
+}
+
+function renderBookmarksPanel(content: HTMLElement, ws: Workspace): void {
+  const doc = getActiveDoc();
+  content.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'bm-panel';
+  content.appendChild(wrap);
+
+  if (!doc) {
+    wrap.innerHTML = '<p class="muted">Open a document to add bookmarks.</p>';
+    return;
+  }
+
+  interface BmRow {
+    item: BookmarkItem;
+    parentId: string | null;
+    el: HTMLElement;
+  }
+  const rows: BmRow[] = [];
+
+  const makeRow = (item: BookmarkItem, parentId: string | null): HTMLElement => {
+    const isGroup = item.pageIndex === undefined;
+    const row = document.createElement('div');
+    row.className = 'bm-row' + (isGroup ? ' bm-group' : '') + (parentId ? ' bm-child' : '');
+    row.dataset.id = item.id;
+    if (isGroup) {
+      const caret = document.createElement('span');
+      caret.className = 'bm-caret';
+      caret.textContent = item.collapsed ? '▸' : '▾';
+      row.appendChild(caret);
+    }
+    const icon = document.createElement('span');
+    icon.className = 'bm-icon';
+    icon.innerHTML = isGroup ? GROUP_ICON : BM_ICON;
+    const title = document.createElement('span');
+    title.className = 'bm-title';
+    title.textContent = item.title;
+    row.append(icon, title);
+    if (!isGroup) {
+      const page = document.createElement('span');
+      page.className = 'bm-page';
+      page.textContent = `p.${(item.pageIndex ?? 0) + 1}`;
+      row.appendChild(page);
+    }
+    rows.push({ item, parentId, el: row });
+    wireBookmarkRow(row, item, isGroup, ws, rows, wrap);
+    return row;
+  };
+
+  if (!doc.bookmarks.length) {
+    wrap.innerHTML = '<p class="muted bm-hint">Right-click to add a bookmark for the current page.</p>';
+  }
+  for (const item of doc.bookmarks) {
+    wrap.appendChild(makeRow(item, null));
+    if (item.children && !item.collapsed) {
+      for (const child of item.children) wrap.appendChild(makeRow(child, item.id));
+    }
+  }
+
+  // Right-click: on a row → item menu; on empty space → add menu
+  content.oncontextmenu = (e) => {
+    e.preventDefault();
+    const rowEl = (e.target as HTMLElement).closest('.bm-row') as HTMLElement | null;
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+    if (rowEl) {
+      menu.innerHTML = `
+        <button data-action="rename">Rename…</button>
+        <button data-action="delete">Delete</button>`;
+    } else {
+      menu.innerHTML = `
+        <button data-action="add-bookmark">Add Bookmark to Current Page</button>
+        <button data-action="add-group">Add Group</button>`;
+    }
+    document.body.appendChild(menu);
+    const close = (): void => menu.remove();
+    menu.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action!;
+        const d = getActiveDoc();
+        if (!d) return close();
+        if (action === 'add-bookmark') {
+          setBookmarks([
+            ...d.bookmarks,
+            { id: uid(), title: `Page ${d.currentPage + 1}`, pageIndex: d.currentPage },
+          ]);
+        } else if (action === 'add-group') {
+          const n = d.bookmarks.filter((b) => b.pageIndex === undefined).length + 1;
+          setBookmarks([...d.bookmarks, { id: uid(), title: `Group ${n}`, children: [], collapsed: false }]);
+        } else if (rowEl) {
+          const id = rowEl.dataset.id!;
+          if (action === 'rename') {
+            const [, item] = removeBookmarkById(d.bookmarks, id);
+            const name = prompt('Name', item?.title ?? '');
+            if (name?.trim()) {
+              setBookmarks(
+                d.bookmarks.map((b) =>
+                  b.id === id
+                    ? { ...b, title: name.trim() }
+                    : b.children?.some((c) => c.id === id)
+                      ? { ...b, children: b.children.map((c) => (c.id === id ? { ...c, title: name.trim() } : c)) }
+                      : b,
+                ),
+              );
+            }
+          } else if (action === 'delete') {
+            const [next] = removeBookmarkById(d.bookmarks, id);
+            setBookmarks(next);
+          }
+        }
+        close();
+      });
+    });
+    setTimeout(() => document.addEventListener('click', close, { once: true }), 0);
+  };
+}
+
+/** Row interactions: click navigates / folds; drag reorders, and dropping a
+ *  page bookmark onto a group header files it into that group. */
+function wireBookmarkRow(
+  row: HTMLElement,
+  item: BookmarkItem,
+  isGroup: boolean,
+  ws: Workspace,
+  rows: { item: BookmarkItem; parentId: string | null; el: HTMLElement }[],
+  container: HTMLElement,
+): void {
+  row.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const startY = e.clientY;
+    let dragging = false;
+    let clone: HTMLElement | null = null;
+    let line: HTMLElement | null = null;
+    let hoverGroup: HTMLElement | null = null;
+
+    const others = (): typeof rows =>
+      rows.filter((r) => r.item.id !== item.id && !(isGroup && r.parentId === item.id));
+
+    /** Insertion anchor (the row the drag would land before) + line position. */
+    const updateDrop = (clientY: number): { anchor: (typeof rows)[number] | null; intoGroup: string | null } => {
+      hoverGroup?.classList.remove('bm-drop-target');
+      hoverGroup = null;
+      const list = others();
+      const cRect = container.getBoundingClientRect();
+      // Hovering the middle of a group header files the bookmark inside it
+      if (!isGroup) {
+        for (const r of list) {
+          if (r.item.pageIndex !== undefined) continue;
+          const rr = r.el.getBoundingClientRect();
+          if (clientY > rr.top + rr.height * 0.3 && clientY < rr.bottom - rr.height * 0.3) {
+            hoverGroup = r.el;
+            r.el.classList.add('bm-drop-target');
+            if (line) line.style.display = 'none';
+            return { anchor: null, intoGroup: r.item.id };
+          }
+        }
+      }
+      let anchor: (typeof rows)[number] | null = null;
+      let top = 0;
+      for (const r of list) {
+        const rr = r.el.getBoundingClientRect();
+        if (clientY < rr.top + rr.height / 2) {
+          anchor = r;
+          top = rr.top - cRect.top + container.scrollTop;
+          break;
+        }
+      }
+      if (!anchor && list.length) {
+        const last = list[list.length - 1]!.el.getBoundingClientRect();
+        top = last.bottom - cRect.top + container.scrollTop;
+      }
+      if (line) {
+        line.style.display = '';
+        line.style.top = `${top}px`;
+      }
+      return { anchor, intoGroup: null };
+    };
+
+    const onMove = (ev: PointerEvent): void => {
+      if (!dragging && Math.abs(ev.clientY - startY) > 5) {
+        dragging = true;
+        row.classList.add('bm-dragging');
+        clone = row.cloneNode(true) as HTMLElement;
+        clone.classList.add('bm-clone');
+        clone.style.width = `${row.offsetWidth}px`;
+        document.body.appendChild(clone);
+        line = document.createElement('div');
+        line.className = 'bm-drop-line';
+        container.appendChild(line);
+      }
+      if (dragging && clone) {
+        const r = row.getBoundingClientRect();
+        clone.style.left = `${r.left}px`;
+        clone.style.top = `${ev.clientY - r.height / 2}px`;
+        updateDrop(ev.clientY);
+      }
+    };
+
+    const onUp = (ev: PointerEvent): void => {
+      try { row.releasePointerCapture(ev.pointerId); } catch { /* best effort */ }
+      row.removeEventListener('pointermove', onMove);
+      row.removeEventListener('pointerup', onUp);
+      hoverGroup?.classList.remove('bm-drop-target');
+      if (!dragging) {
+        // Plain click: navigate to a bookmark, fold/unfold a group
+        const d = getActiveDoc();
+        if (!d) return;
+        if (isGroup) {
+          setBookmarks(d.bookmarks.map((b) => (b.id === item.id ? { ...b, collapsed: !b.collapsed } : b)));
+        } else if (item.pageIndex !== undefined) {
+          ws.goToPage(Math.min(item.pageIndex, d.pageCount - 1));
+        }
+        return;
+      }
+      const target = updateDrop(ev.clientY);
+      row.classList.remove('bm-dragging');
+      clone?.remove();
+      line?.remove();
+      const d = getActiveDoc();
+      if (!d) return;
+      let [next, moved] = removeBookmarkById(d.bookmarks, item.id);
+      if (!moved) return;
+      if (target.intoGroup) {
+        next = next.map((b) =>
+          b.id === target.intoGroup ? { ...b, collapsed: false, children: [...(b.children ?? []), moved!] } : b,
+        );
+      } else if (!target.anchor) {
+        next = [...next, moved];
+      } else {
+        // Groups always land at the top level; bookmarks join the anchor's level
+        const parentId = isGroup ? null : target.anchor.parentId;
+        const anchorId = parentId === target.anchor.parentId ? target.anchor.item.id : null;
+        if (parentId) {
+          next = next.map((b) => {
+            if (b.id !== parentId) return b;
+            const kids = [...(b.children ?? [])];
+            const at = anchorId ? kids.findIndex((c) => c.id === anchorId) : kids.length;
+            kids.splice(at === -1 ? kids.length : at, 0, moved!);
+            return { ...b, children: kids };
+          });
+        } else {
+          // Anchor may live inside a group — insert before that group instead
+          const topAnchorId = target.anchor.parentId ?? target.anchor.item.id;
+          const at = next.findIndex((b) => b.id === topAnchorId);
+          next.splice(at === -1 ? next.length : at, 0, moved);
+        }
+      }
+      setBookmarks(next);
+    };
+
+    try { row.setPointerCapture(e.pointerId); } catch { /* best effort */ }
+    row.addEventListener('pointermove', onMove);
+    row.addEventListener('pointerup', onUp);
+  });
+}
+
+/* ── Document text search (right-panel Search tab) ─────────────────────── */
+let _searchSeq = 0;
+
+function wireSearch(root: HTMLElement, ws: Workspace): void {
+  const input = root.querySelector('.search-input') as HTMLInputElement | null;
+  const status = root.querySelector('.search-status') as HTMLElement | null;
+  const list = root.querySelector('.search-results') as HTMLElement | null;
+  if (!input || !status || !list) return;
+
+  let debounce: number | null = null;
+  const run = async (): Promise<void> => {
+    const doc = getActiveDoc();
+    const query = input.value.trim();
+    const seq = ++_searchSeq;
+    list.innerHTML = '';
+    if (!doc?.pdfDoc || query.length < 2) {
+      status.textContent = query.length === 1 ? 'Type at least 2 characters' : '';
+      return;
+    }
+    const pdfDoc = doc.pdfDoc;
+    const { searchDocument } = await import('../pdf/search');
+    const hits = await searchDocument(pdfDoc, query, (page, total) => {
+      if (seq === _searchSeq) status.textContent = `Searching page ${page} / ${total}…`;
+    });
+    if (seq !== _searchSeq) return; // superseded by newer input
+    status.textContent = hits.length
+      ? `${hits.length}${hits.length >= 300 ? '+' : ''} result${hits.length === 1 ? '' : 's'}`
+      : 'No results';
+    for (const hit of hits) {
+      const li = document.createElement('li');
+      const page = document.createElement('span');
+      page.className = 'sr-page';
+      page.textContent = `p.${hit.pageIndex + 1}`;
+      const snippet = document.createElement('span');
+      snippet.className = 'sr-snippet';
+      const mark = document.createElement('mark');
+      mark.textContent = hit.match;
+      snippet.append(document.createTextNode(hit.before), mark, document.createTextNode(hit.after));
+      li.append(page, snippet);
+      li.addEventListener('click', () => ws.revealPageRect(hit.pageIndex, hit.rect));
+      list.appendChild(li);
+    }
+  };
+
+  input.addEventListener('input', () => {
+    if (debounce !== null) clearTimeout(debounce);
+    debounce = window.setTimeout(() => void run(), 350);
+  });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // keep tool hotkeys away while typing
+    if (e.key === 'Enter') {
+      if (debounce !== null) clearTimeout(debounce);
+      void run();
+    }
+  });
+}
+
 const PANEL_MIN = 160;
 const PANEL_MAX = 480;
 /** Margin around the floating glass chrome (ribbon / panels) — keep in sync
@@ -786,6 +1141,12 @@ function wirePanels(root: HTMLElement, _ws: Workspace): void {
   root.querySelectorAll('.left-panel .panel-tabs button').forEach((btn) => {
     btn.addEventListener('click', () => {
       setState({ leftPanelTab: (btn as HTMLElement).dataset.tab as 'bookmarks' | 'thumbnails' });
+    });
+  });
+
+  root.querySelectorAll('.right-tabs button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setState({ rightPanelTab: (btn as HTMLElement).dataset.rtab as 'properties' | 'search' });
     });
   });
 
@@ -927,6 +1288,14 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   renderStatusBar(root);
   renderSplit(root, secondaryWs);
 
+  // Right-panel tab (Properties / Search)
+  const rtab = state.rightPanelTab;
+  root.querySelectorAll('.right-tabs button').forEach((b) => {
+    b.classList.toggle('active', (b as HTMLElement).dataset.rtab === rtab);
+  });
+  root.querySelector('.right-tab-properties')?.classList.toggle('hidden', rtab !== 'properties');
+  root.querySelector('.right-tab-search')?.classList.toggle('hidden', rtab !== 'search');
+
   const tool = state.activeTool;
   root.querySelectorAll('.tool-btn').forEach((btn) => {
     btn.classList.toggle('active', (btn as HTMLElement).dataset.tool === tool);
@@ -994,17 +1363,12 @@ function renderDocTabs(root: HTMLElement): void {
     tab.appendChild(close);
     tabs.appendChild(tab);
   }
-  // Hint that this strip is a drop target for new files
-  const hint = document.createElement('span');
-  hint.className = 'drop-hint';
-  hint.textContent = 'Drop PDF / JPG / PNG to open';
-  tabs.appendChild(hint);
 }
 
-/** The doc-tab strip (below the menu, above the ribbon) accepts dropped PDF /
- *  JPEG / PNG files, opening each as a new document. */
+/** The whole menubar accepts dropped PDF / JPEG / PNG files, opening each as
+ *  a new document (no hint text — the header itself is the drop target). */
 function wireDropZone(root: HTMLElement): void {
-  const zone = root.querySelector('.doc-tabs') as HTMLElement | null;
+  const zone = root.querySelector('.menubar') as HTMLElement | null;
   if (!zone) return;
   zone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -1082,11 +1446,11 @@ function renderLeftPanel(root: HTMLElement, ws: Workspace): void {
   const doc = getActiveDoc();
 
   if (state.leftPanelTab !== 'thumbnails') {
-    // Tear down any running observer and clear
+    // Tear down any running observer and render the bookmarks tree
     _thumbObserver?.disconnect();
     _thumbObserver = null;
     _thumbDocId = null;
-    content.innerHTML = '<p class="muted">PDF outline bookmarks appear here when available.</p>';
+    renderBookmarksPanel(content, ws);
     return;
   }
 

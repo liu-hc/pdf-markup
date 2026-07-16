@@ -132,16 +132,15 @@ input, select, textarea, button {
 .workspace-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
 
 /* ── App shell grid ────────────────────────────────────────────────────── */
-/* menubar · doc-tabs · main (canvas + floating glass) · status */
+/* menubar (with inline doc tabs) · main (canvas + floating glass) · status */
 .app-shell {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
   height: 100%;
 }
 
 /* ── Shared chrome surface ─────────────────────────────────────────────── */
-.menubar,
-.doc-tabs {
+.menubar {
   background: var(--chrome);
 }
 
@@ -311,13 +310,14 @@ input, select, textarea, button {
 .btn-save:hover  { filter: brightness(1.12); }
 .btn-save:active { transform: scale(0.97); }
 
-/* ── Doc tabs ──────────────────────────────────────────────────────────── */
+/* ── Doc tabs — inline in the menubar, following the menu names ────────── */
 .doc-tabs {
   display: flex;
   gap: 4px;
-  padding: 0 10px 5px;
-  min-height: 24px;
+  margin-left: 10px;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .doc-tab {
@@ -847,7 +847,9 @@ input, select, textarea, button {
 }
 
 .panel-tabs button.active {
-  color: var(--ink);
+  /* Literal dark ink — the inspector remaps --ink to light for its dark
+     glass, but this white pill needs dark text in BOTH panels */
+  color: #1a2940;
   background: #fff;
   font-weight: 700;
   box-shadow: 0 1px 6px rgba(6, 8, 26, 0.35);
@@ -861,6 +863,194 @@ input, select, textarea, button {
 }
 
 .left-panel .panel-content { color: var(--rail-text-2); }
+
+/* ── Bookmarks panel (violet rail) ─────────────────────────────────────── */
+.bm-panel {
+  position: relative;
+  padding: 2px 0 40px; /* bottom slack keeps a right-click landing zone */
+  min-height: 160px;
+}
+
+.bm-hint { font-size: var(--font-xs); padding: 6px 4px; }
+
+.bm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--rail-text);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+}
+
+.bm-row:hover { background: rgba(255, 255, 255, 0.08); }
+
+.bm-row.bm-child { margin-left: 18px; }
+
+.bm-caret {
+  width: 12px;
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--rail-text-2);
+}
+
+.bm-icon { display: flex; flex-shrink: 0; color: var(--rail-text-2); }
+.bm-group .bm-icon { color: var(--accent-bright); }
+
+.bm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bm-page {
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--rail-text-2);
+}
+
+.bm-row.bm-dragging { opacity: 0.3; }
+
+.bm-row.bm-drop-target {
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.bm-clone {
+  position: fixed;
+  z-index: 1100;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: var(--font-sm);
+  color: var(--text);
+  background: var(--chrome-3);
+  border: 1px solid var(--accent-border);
+  box-shadow: 0 6px 18px rgba(8, 18, 34, 0.5);
+  opacity: 0.95;
+}
+
+.bm-drop-line {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  margin-top: -1.5px;
+  background: var(--accent-bright);
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(91, 147, 232, 0.8);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ── Search tab (right panel) ──────────────────────────────────────────── */
+.right-tab-properties {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-tab-properties.hidden,
+.right-tab-search.hidden { display: none; }
+
+.right-tab-search {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.search-input {
+  background: rgba(11, 20, 34, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: var(--font-sm);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--t), box-shadow var(--t);
+}
+
+.search-input:focus {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.search-status {
+  font-size: var(--font-xs);
+  color: var(--ink-3);
+  min-height: 14px;
+}
+
+.search-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.search-results li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: var(--font-xs);
+  color: var(--ink-2);
+  line-height: 1.45;
+  transition: background var(--t);
+}
+
+.search-results li:hover { background: rgba(255, 255, 255, 0.08); }
+
+.sr-page {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(62, 123, 214, 0.3);
+  color: var(--text);
+  font-size: var(--font-xs);
+}
+
+.sr-snippet { min-width: 0; word-break: break-word; }
+
+.sr-snippet mark {
+  background: rgba(91, 147, 232, 0.45);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Pulsing highlight over a located search hit on the page */
+.search-flash {
+  fill: rgba(91, 147, 232, 0.35);
+  stroke: var(--accent-bright);
+  stroke-width: 1.5;
+  animation: search-flash-pulse 2.4s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes search-flash-pulse {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
 
 /* ── Thumbnail items ───────────────────────────────────────────────────── */
 .thumb-item {
@@ -1083,6 +1273,65 @@ input, select, textarea, button {
   border: none;
   box-shadow: none;
   padding: 4px 5px;
+}
+
+/* Formatting toolbar floating above the inline editor */
+.text-format-bar {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 9px;
+  background: rgba(22, 34, 52, 0.85);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 6px 20px rgba(8, 18, 34, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  white-space: nowrap;
+}
+
+.tfb-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--t), color var(--t);
+}
+
+.tfb-btn:hover { background: var(--hover); color: var(--text); }
+
+.tfb-btn.on {
+  background: var(--accent-dim);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.tfb-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.tfb-spacing {
+  background: var(--chrome-3);
+  border: 1px solid var(--chrome-border-2);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: var(--font-xs);
+  padding: 1px 3px;
+  height: 20px;
+  cursor: pointer;
 }
 
 /* Control-point cursors: open hand on hover, closed hand while dragging */
@@ -1977,20 +2226,9 @@ body.grabbing * {
   80% { transform: translateX(4px); }
 }
 
-/* ── Doc-tab strip drop zone (PDF / JPG / PNG) ─────────────────────────── */
-.doc-tabs { position: relative; }
-.doc-tabs.drag-over {
+/* ── Header drop zone (PDF / JPG / PNG) ────────────────────────────────── */
+.menubar.drag-over {
   outline: 2px dashed var(--accent);
   outline-offset: -3px;
   background: var(--accent-dim);
 }
-.drop-hint {
-  margin-left: auto;
-  align-self: center;
-  padding: 0 10px;
-  font-size: var(--font-xs);
-  color: var(--text-3);
-  white-space: nowrap;
-  pointer-events: none;
-}
-.doc-tabs.drag-over .drop-hint { color: var(--text); }

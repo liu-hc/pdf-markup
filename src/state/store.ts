@@ -15,6 +15,7 @@ let state: AppState = {
   leftPanelWidth: 220,
   rightPanelWidth: 220,
   leftPanelTab: 'thumbnails',
+  rightPanelTab: 'properties',
 };
 
 const listeners = new Set<Listener>();
@@ -74,6 +75,7 @@ export function createEmptyDoc(id: string, filename: string): PdfDocumentState {
     overlays: [null, null],
     overlayMultiply: false,
     clipboard: null,
+    bookmarks: [],
   };
 }
 

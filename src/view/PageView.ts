@@ -368,6 +368,21 @@ export class PageView {
     this.svgLayer.innerHTML = '';
   }
 
+  /** Pulse a highlight over a page-coordinate rect (search hits). */
+  flashHighlight(rect: { x: number; y: number; w: number; h: number }): void {
+    const ns = 'http://www.w3.org/2000/svg';
+    const el = document.createElementNS(ns, 'rect');
+    const pad = 3;
+    el.setAttribute('x', String(rect.x * this.scale - pad));
+    el.setAttribute('y', String((this.pageHeight - rect.y - rect.h) * this.scale - pad));
+    el.setAttribute('width', String(rect.w * this.scale + pad * 2));
+    el.setAttribute('height', String(rect.h * this.scale + pad * 2));
+    el.setAttribute('rx', '3');
+    el.setAttribute('class', 'search-flash');
+    this.svgLayer.appendChild(el);
+    setTimeout(() => el.remove(), 2400);
+  }
+
   drawSelectionHandles(markup: Markup, selected: boolean): void {
     this.clearSvg();
     if (!selected) return;

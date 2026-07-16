@@ -33,9 +33,10 @@ export async function loadPdfFromFile(
   doc.pages = await loadPageInfos(pdfDoc);
   doc.pageDefaults = Array.from({ length: doc.pageCount }, () => ({ ...DEFAULT_PAGE_DEFAULTS }));
 
-  const metaMarkups = await parseMarkupsFromMetadata(bytes);
-  if (metaMarkups.length) {
-    doc.markups = metaMarkups;
+  const meta = await parseMarkupsFromMetadata(bytes);
+  doc.bookmarks = meta.bookmarks;
+  if (meta.markups.length) {
+    doc.markups = meta.markups;
   } else {
     doc.markups = await parseMarkupsFromAnnotations(pdfDoc);
   }

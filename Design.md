@@ -200,7 +200,16 @@ src/
 ## 7. Notes & known limitations
 
 - Chrome/Edge only (File System Access API + pdfjs legacy build).
-- The Bookmarks tab is a placeholder.
+- **Bookmarks** — right-click the Bookmarks tab to add a bookmark for the
+  current page or a foldable group; drag rows to reorder, drop a bookmark
+  onto a group header to file it inside. Saved into the PDF metadata.
+- **Search** — the inspector's second tab searches the whole document's text;
+  results list matches highlighted in context, in page order, and clicking
+  one jumps to the word and pulses a highlight on it.
+- **Text formatting** — while editing a text box or callout, a floating
+  toolbar offers bold, underline, indent, row spacing, and horizontal +
+  vertical alignment (rendered on canvas and in saved/flattened PDFs).
+- The PDF's own outline (table of contents) is not imported as bookmarks.
 - PDF export of complex markups (callout elbow, dimension ticks/labels, dashed
   styles, measure labels) is simplified relative to the on-screen rendering.
 - Rotated-shape resize keeps the shape's local frame but does not pin the

@@ -4,13 +4,13 @@ import type { PdfDocumentState, Markup, PageDefaults } from '../state/types';
 import { META_KEY } from './importMarkups';
 
 /** Map UI font families onto the 14 PDF standard fonts. Arial is the default. */
-const FONT_MAP: Record<string, StandardFonts> = {
-  Arial: StandardFonts.Helvetica,
-  Helvetica: StandardFonts.Helvetica,
-  Verdana: StandardFonts.Helvetica,
-  'Times New Roman': StandardFonts.TimesRoman,
-  Georgia: StandardFonts.TimesRoman,
-  'Courier New': StandardFonts.Courier,
+const FONT_MAP: Record<string, { regular: StandardFonts; bold: StandardFonts }> = {
+  Arial: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
+  Helvetica: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
+  Verdana: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
+  'Times New Roman': { regular: StandardFonts.TimesRoman, bold: StandardFonts.TimesRomanBold },
+  Georgia: { regular: StandardFonts.TimesRoman, bold: StandardFonts.TimesRomanBold },
+  'Courier New': { regular: StandardFonts.Courier, bold: StandardFonts.CourierBold },
 };
 
 type FontCache = Map<StandardFonts, PDFFont>;
@@ -59,8 +59,9 @@ function wrapPdfLines(font: PDFFont, text: string, size: number, maxWidth: numbe
   return lines;
 }
 
-async function getFont(pdf: PDFDocument, cache: FontCache, family?: string): Promise<PDFFont> {
-  const std = FONT_MAP[family ?? 'Arial'] ?? StandardFonts.Helvetica;
+async function getFont(pdf: PDFDocument, cache: FontCache, family?: string, bold = false): Promise<PDFFont> {
+  const entry = FONT_MAP[family ?? 'Arial'] ?? FONT_MAP.Arial!;
+  const std = bold ? entry.bold : entry.regular;
   let font = cache.get(std);
   if (!font) {
     font = await pdf.embedFont(std);
@@ -69,9 +70,65 @@ async function getFont(pdf: PDFDocument, cache: FontCache, family?: string): Pro
   return font;
 }
 
+/** One indent step in page points — keep in sync with INDENT_STEP in draw.ts. */
+const PDF_INDENT_STEP = 12;
+
+interface TextFormatting {
+  underline: boolean;
+  indent: number;
+  align: 'left' | 'center' | 'right';
+  valign: 'top' | 'middle' | 'bottom';
+}
+
+/** Wrapped, aligned text inside a box (PDF coords, y-up; box.y = bottom edge).
+ *  Drawn line by line so horizontal/vertical alignment and underline match
+ *  the on-screen rendering. */
+function drawFormattedText(
+  page: ReturnType<PDFDocument['getPage']>,
+  font: PDFFont,
+  content: string,
+  box: { x: number; y: number; w: number; h: number },
+  pad: number,
+  fontSize: number,
+  lineSpacing: number,
+  color: ReturnType<typeof rgb>,
+  fmt: TextFormatting,
+): void {
+  const indent = fmt.indent * PDF_INDENT_STEP;
+  const availW = Math.max(20, box.w - pad * 2 - indent);
+  const lines = wrapPdfLines(font, content, fontSize, availW);
+  const lineH = fontSize * lineSpacing;
+  const blockH = lines.length * lineH;
+  const boxTop = box.y + box.h;
+  // Top edge of the text block per vertical alignment (never above the pad)
+  const blockTop =
+    fmt.valign === 'middle'
+      ? Math.min(boxTop - pad, box.y + (box.h + blockH) / 2)
+      : fmt.valign === 'bottom'
+        ? Math.min(boxTop - pad, box.y + pad + blockH)
+        : boxTop - pad;
+  const left = box.x + pad + indent;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const lw = font.widthOfTextAtSize(line, fontSize);
+    const lx =
+      fmt.align === 'center' ? left + (availW - lw) / 2 : fmt.align === 'right' ? left + availW - lw : left;
+    const baseline = blockTop - fontSize * 0.85 - i * lineH;
+    page.drawText(line, { x: lx, y: baseline, size: fontSize, font, color });
+    if (fmt.underline && line.trim()) {
+      page.drawLine({
+        start: { x: lx, y: baseline - fontSize * 0.12 },
+        end: { x: lx + lw, y: baseline - fontSize * 0.12 },
+        thickness: Math.max(0.5, fontSize * 0.06),
+        color,
+      });
+    }
+  }
+}
+
 export async function exportPdf(doc: PdfDocumentState): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(doc.pdfBytes!);
-  pdf.setSubject(`${META_KEY}:${JSON.stringify(doc.markups)}`);
+  pdf.setSubject(`${META_KEY}:${JSON.stringify({ markups: doc.markups, bookmarks: doc.bookmarks })}`);
   const fonts: FontCache = new Map();
 
   for (const markup of doc.markups) {
@@ -186,20 +243,23 @@ async function embedMarkup(
         borderWidth: lineWeight,
         color: fill ? parseColor(fill) : undefined,
       });
-      const font = await getFont(pdf, fonts, fontFamily);
-      const pad = 3;
-      const lines = wrapPdfLines(font, markup.content, fontSize, Math.max(20, markup.width - pad * 2));
-      // drawText's y is the FIRST line's baseline — anchor the block at the
-      // box TOP so the text stays inside (it was anchored at the bottom and
-      // ran out of the box in saved/flattened output)
-      page.drawText(lines.join('\n'), {
-        x: markup.x + pad,
-        y: markup.y + markup.height - pad - fontSize * 0.85,
-        size: fontSize,
-        lineHeight: fontSize * lineSpacing,
+      const font = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
+      drawFormattedText(
+        page,
         font,
-        color: parseColor(markup.overrides?.textColor ?? defaults.textColor),
-      });
+        markup.content,
+        { x: markup.x, y: markup.y, w: markup.width, h: markup.height },
+        3,
+        fontSize,
+        lineSpacing,
+        parseColor(markup.overrides?.textColor ?? defaults.textColor),
+        {
+          underline: markup.overrides?.underline ?? false,
+          indent: markup.overrides?.indent ?? 0,
+          align: markup.overrides?.align ?? 'left',
+          valign: markup.overrides?.valign ?? 'top',
+        },
+      );
       break;
     }
     case 'sticky': {
@@ -247,17 +307,23 @@ async function embedMarkup(
         borderWidth: lineWeight,
         color: fill ? parseColor(fill) : rgb(1, 0.996, 0.96),
       });
-      const calloutFont = await getFont(pdf, fonts, fontFamily);
-      const pad = 4;
-      const lines = wrapPdfLines(calloutFont, markup.content, fontSize, Math.max(20, markup.textWidth - pad * 2));
-      page.drawText(lines.join('\n'), {
-        x: markup.textX + pad,
-        y: markup.textY + markup.textHeight - pad - fontSize * 0.85,
-        size: fontSize,
-        lineHeight: fontSize * lineSpacing,
-        font: calloutFont,
-        color: parseColor(markup.overrides?.textColor ?? defaults.textColor),
-      });
+      const calloutFont = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
+      drawFormattedText(
+        page,
+        calloutFont,
+        markup.content,
+        { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight },
+        4,
+        fontSize,
+        lineSpacing,
+        parseColor(markup.overrides?.textColor ?? defaults.textColor),
+        {
+          underline: markup.overrides?.underline ?? false,
+          indent: markup.overrides?.indent ?? 0,
+          align: markup.overrides?.align ?? 'left',
+          valign: markup.overrides?.valign ?? 'top',
+        },
+      );
       break;
     }
     case 'measureAngle': {

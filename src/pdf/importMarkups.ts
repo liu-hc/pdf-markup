@@ -1,18 +1,27 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import type { Markup } from '../state/types';
+import type { BookmarkItem, Markup } from '../state/types';
 
 const META_KEY = 'MarkupStudioData';
 
-export async function parseMarkupsFromMetadata(bytes: Uint8Array): Promise<Markup[]> {
+export interface StudioMetadata {
+  markups: Markup[];
+  bookmarks: BookmarkItem[];
+}
+
+/** Parse the Subject metadata. Old files stored a bare markups array; new
+ *  files store `{ markups, bookmarks }` — both are accepted. */
+export async function parseMarkupsFromMetadata(bytes: Uint8Array): Promise<StudioMetadata> {
   try {
     const { PDFDocument } = await import('pdf-lib');
     const pdf = await PDFDocument.load(bytes);
     const subject = pdf.getSubject();
-    if (!subject?.startsWith(META_KEY + ':')) return [];
+    if (!subject?.startsWith(META_KEY + ':')) return { markups: [], bookmarks: [] };
     const json = subject.slice(META_KEY.length + 1);
-    return JSON.parse(json) as Markup[];
+    const parsed = JSON.parse(json) as Markup[] | { markups?: Markup[]; bookmarks?: BookmarkItem[] };
+    if (Array.isArray(parsed)) return { markups: parsed, bookmarks: [] };
+    return { markups: parsed.markups ?? [], bookmarks: parsed.bookmarks ?? [] };
   } catch {
-    return [];
+    return { markups: [], bookmarks: [] };
   }
 }
 

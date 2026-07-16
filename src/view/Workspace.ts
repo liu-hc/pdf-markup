@@ -608,6 +608,33 @@ export class Workspace {
     }
   }
 
+  /** Navigate to a page, center the viewport on a page-coordinate rect and
+   *  pulse a highlight there (search results). Waits for the page to mount. */
+  revealPageRect(pageIndex: number, rect: { x: number; y: number; w: number; h: number }): void {
+    this.goToPage(pageIndex);
+    let tries = 0;
+    const attempt = (): void => {
+      const doc = getActiveDoc();
+      if (!doc) return;
+      const pv = this.pageViews.get(pageIndex);
+      if (!pv || !pv.el.isConnected || !pv.hasBase()) {
+        if (tries++ < 240) requestAnimationFrame(attempt);
+        return;
+      }
+      const zoom = this.getZoom();
+      const view = this.scrollEl.getBoundingClientRect();
+      const pr = pv.el.getBoundingClientRect();
+      const cx = (rect.x + rect.w / 2) * zoom;
+      const cy = (pv.getPageHeight() - rect.y - rect.h / 2) * zoom;
+      this.scrollEl.scrollLeft += pr.left + cx - (view.left + view.width / 2);
+      this.scrollEl.scrollTop += pr.top + cy - (view.top + view.height / 2);
+      this.updateRegions();
+      pv.flashHighlight(rect);
+      this.onScroll(); // refresh the crisp detail pass at the new spot
+    };
+    requestAnimationFrame(attempt);
+  }
+
   goToPage(index: number): void {
     updateActiveDoc((d) => ({ ...d, currentPage: index }));
     // updateActiveDoc triggers _scheduleRefresh — no manual refresh needed for single mode.

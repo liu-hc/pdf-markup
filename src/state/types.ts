@@ -51,6 +51,13 @@ export interface AppearanceOverrides {
   fontFamily?: string;
   /** Multiple of the font size (1 = single, 2 = double). Text/callout only. */
   lineSpacing?: number;
+  /** Text/callout block formatting (set from the inline-editor toolbar). */
+  bold?: boolean;
+  underline?: boolean;
+  /** Block left indent, in steps of 12pt. */
+  indent?: number;
+  align?: 'left' | 'center' | 'right';
+  valign?: 'top' | 'middle' | 'bottom';
 }
 
 export type MarkupType =
@@ -238,6 +245,8 @@ export interface PdfDocumentState {
   /** Composite overlay pages onto the base page Photoshop-Multiply style. */
   overlayMultiply: boolean;
   clipboard: Markup[] | null;
+  /** User bookmarks (saved into the PDF metadata alongside the markups). */
+  bookmarks: BookmarkItem[];
 }
 
 export interface AppState {
@@ -253,12 +262,17 @@ export interface AppState {
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelTab: 'bookmarks' | 'thumbnails';
+  rightPanelTab: 'properties' | 'search';
 }
 
-export interface BookmarkNode {
+/** User bookmark: a page bookmark when `pageIndex` is set, else a foldable
+ *  group whose `children` are page bookmarks (one level deep). */
+export interface BookmarkItem {
+  id: string;
   title: string;
-  pageIndex: number;
-  children: BookmarkNode[];
+  pageIndex?: number;
+  children?: BookmarkItem[];
+  collapsed?: boolean;
 }
 
 /** Default markup color — dark blue from the standard palette. */
@@ -277,7 +291,7 @@ export const DEFAULT_PAGE_DEFAULTS: PageDefaults = {
 };
 
 /** Line weight presets (pt); "Custom…" prompts for any other value. */
-export const LINE_WEIGHT_OPTIONS = [0.25, 0.5, 1, 2, 3];
+export const LINE_WEIGHT_OPTIONS = [0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /** Text-size presets (pt) for the dropdown selectors. */
 export const TEXT_SIZE_OPTIONS = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];

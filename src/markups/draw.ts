@@ -27,7 +27,16 @@ export interface DrawStyle {
   fontSize: number;
   fontFamily: string;
   lineSpacing: number;
+  bold: boolean;
+  underline: boolean;
+  /** Block left indent, in steps of INDENT_STEP pt. */
+  indent: number;
+  align: 'left' | 'center' | 'right';
+  valign: 'top' | 'middle' | 'bottom';
 }
+
+/** One indent step in page points. */
+export const INDENT_STEP = 12;
 
 export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle {
   return {
@@ -40,12 +49,17 @@ export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle 
     fontSize: markup.overrides?.fontSize ?? defaults.fontSize ?? 12,
     fontFamily: markup.overrides?.fontFamily ?? defaults.fontFamily ?? 'Arial',
     lineSpacing: markup.overrides?.lineSpacing ?? 1.35,
+    bold: markup.overrides?.bold ?? false,
+    underline: markup.overrides?.underline ?? false,
+    indent: markup.overrides?.indent ?? 0,
+    align: markup.overrides?.align ?? 'left',
+    valign: markup.overrides?.valign ?? 'top',
   };
 }
 
 /** Canvas font shorthand — quoted family with a sans-serif fallback. */
-function canvasFont(sizePx: number, family: string): string {
-  return `${sizePx}px "${family}", sans-serif`;
+function canvasFont(sizePx: number, family: string, bold = false): string {
+  return `${bold ? '700 ' : ''}${sizePx}px "${family}", sans-serif`;
 }
 
 export function drawMarkupOnCanvas(
@@ -320,16 +334,7 @@ export function drawMarkupOnCanvas(
       ctx.beginPath();
       ctx.rect(x, y, markup.width * scale, markup.height * scale);
       ctx.clip();
-      drawMultilineText(
-        ctx,
-        markup.content,
-        x + 3 * scale,
-        y + 3 * scale,
-        Math.max(20, markup.width * scale - 6 * scale),
-        style.fontSize * scale,
-        style.fontFamily,
-        style.lineSpacing,
-      );
+      drawTextBlock(ctx, markup.content, x, y, markup.width * scale, markup.height * scale, 3 * scale, style, scale);
       ctx.restore();
       break;
     }
@@ -377,16 +382,7 @@ export function drawMarkupOnCanvas(
       ctx.beginPath();
       ctx.rect(bx, by, bw, bh);
       ctx.clip();
-      drawMultilineText(
-        ctx,
-        markup.content,
-        bx + 4 * scale,
-        by + 4 * scale,
-        Math.max(20, bw - 8 * scale),
-        style.fontSize * scale,
-        style.fontFamily,
-        style.lineSpacing,
-      );
+      drawTextBlock(ctx, markup.content, bx, by, bw, bh, 4 * scale, style, scale);
       ctx.restore();
       break;
     }
@@ -612,24 +608,48 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
   return lines;
 }
 
-/** Word-wrapped multiline text, top-anchored at (x, y). */
-function drawMultilineText(
+/** Formatted text block inside a box (screen px): word-wrap, block indent,
+ *  horizontal + vertical alignment, bold and underline. `pad` is the inner
+ *  padding on every side. */
+function drawTextBlock(
   ctx: CanvasRenderingContext2D,
   text: string,
-  x: number,
-  y: number,
-  maxWidth: number,
-  fontSize: number,
-  fontFamily = 'Arial',
-  lineSpacing = 1.35,
+  bx: number,
+  by: number,
+  bw: number,
+  bh: number,
+  pad: number,
+  style: DrawStyle,
+  scale: number,
 ): void {
-  ctx.font = canvasFont(fontSize, fontFamily);
+  const fontSize = style.fontSize * scale;
+  const indent = style.indent * INDENT_STEP * scale;
+  const availW = Math.max(20, bw - pad * 2 - indent);
+  ctx.font = canvasFont(fontSize, style.fontFamily, style.bold);
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
-  const lineHeight = fontSize * lineSpacing;
-  let cy = y;
-  for (const line of wrapLines(ctx, text, maxWidth)) {
-    ctx.fillText(line, x, cy);
+  const lineHeight = fontSize * style.lineSpacing;
+  const lines = wrapLines(ctx, text, availW);
+  const blockH = lines.length * lineHeight;
+  let cy =
+    style.valign === 'middle'
+      ? by + Math.max(pad, (bh - blockH) / 2)
+      : style.valign === 'bottom'
+        ? by + Math.max(pad, bh - pad - blockH)
+        : by + pad;
+  const left = bx + pad + indent;
+  for (const line of lines) {
+    const lw = ctx.measureText(line).width;
+    const lx =
+      style.align === 'center'
+        ? left + (availW - lw) / 2
+        : style.align === 'right'
+          ? left + availW - lw
+          : left;
+    ctx.fillText(line, lx, cy);
+    if (style.underline && line.trim()) {
+      ctx.fillRect(lx, cy + fontSize * 0.95, lw, Math.max(1, fontSize * 0.06));
+    }
     cy += lineHeight;
   }
 }
@@ -645,11 +665,13 @@ export function measureTextBlockHeight(
   fontSize: number,
   fontFamily = 'Arial',
   lineSpacing = 1.35,
+  bold = false,
+  indentSteps = 0,
 ): number {
   if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
   if (!_measureCtx) return fontSize * lineSpacing;
-  _measureCtx.font = canvasFont(fontSize, fontFamily);
-  const lines = wrapLines(_measureCtx, text, Math.max(20, maxWidth));
+  _measureCtx.font = canvasFont(fontSize, fontFamily, bold);
+  const lines = wrapLines(_measureCtx, text, Math.max(20, maxWidth - indentSteps * INDENT_STEP));
   return lines.length * fontSize * lineSpacing;
 }
 

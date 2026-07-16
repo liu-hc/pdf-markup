@@ -130,8 +130,11 @@ function setGrabbing(on: boolean): void {
 }
 
 /** Canvas cursor for the active tool: a crosshair while any drawing/measure
- *  tool is armed, an open hand for Pan, the plain arrow for navigation. */
+ *  tool is armed, an open hand for Pan, the plain arrow for navigation.
+ *  While a pan drag is live (middle-drag on any tool) the closed hand wins —
+ *  Workspace.refresh() runs during the drag and must not clobber it. */
 export function cursorForTool(tool: ToolId): string {
+  if (panning) return 'grabbing';
   if (tool === 'pan') return 'grab';
   if (tool === 'flip' || tool === 'zoom' || tool === 'select') return '';
   if (tool === 'highlighter') return MARKER_CURSOR; // refined to I-beam over text on hover
@@ -1147,6 +1150,7 @@ function openTextBoxEditor(
   const ph = pv.getPageHeight();
   const color = previewColor(pageIndex);
   const top = rect.y + rect.height; // page-y of the box top edge
+  const font = editorFont(pageIndex);
   // Show the box outline while typing
   pv.drawCalloutGuide([], { x: rect.x, y: rect.y, w: rect.width, h: rect.height }, color, null);
   spawnTextEditor({
@@ -1156,12 +1160,16 @@ function openTextBoxEditor(
     widthPx: rect.width * scale,
     heightPx: rect.height * scale,
     initial: '',
-    font: editorFont(pageIndex),
+    font,
     transparent: true,
-    onCommit: (text, wPx, hPx) => {
+    formatting: initialFormatting(undefined, font.spacing),
+    onCommit: (text, wPx, hPx, fmt) => {
       pv.clearSvg();
+      const f = fmt ?? initialFormatting(undefined, font.spacing);
       const w = wPx / scale;
-      const h = hPx / scale;
+      // Grow the box to fit the wrapped text (the canvas clips to the box)
+      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, f.lineSpacing, f.bold, f.indent);
+      const h = Math.max(hPx / scale, contentH + 8);
       const markup: TextMarkup = {
         id: uid(),
         type: 'text',
@@ -1171,6 +1179,7 @@ function openTextBoxEditor(
         width: w,
         height: h,
         content: text,
+        overrides: fmtToOverrides(f),
       };
       applyMarkupChange('Add text', [...docMarkups(), markup]);
       returnToNavTool();
@@ -1436,6 +1445,29 @@ function editorFont(
   };
 }
 
+/** Block formatting collected by the inline-editor toolbar (text/callout). */
+export interface EditorFormatting {
+  bold: boolean;
+  underline: boolean;
+  /** Block left indent, in steps of 12pt. */
+  indent: number;
+  lineSpacing: number;
+  align: 'left' | 'center' | 'right';
+  valign: 'top' | 'middle' | 'bottom';
+}
+
+const ALIGN_ICONS: Record<'left' | 'center' | 'right', string> = {
+  left: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="2.5" x2="10.5" y2="2.5"/><line x1="1.5" y1="6" x2="7" y2="6"/><line x1="1.5" y1="9.5" x2="9" y2="9.5"/></svg>`,
+  center: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="2.5" x2="10.5" y2="2.5"/><line x1="3.5" y1="6" x2="8.5" y2="6"/><line x1="2.5" y1="9.5" x2="9.5" y2="9.5"/></svg>`,
+  right: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="2.5" x2="10.5" y2="2.5"/><line x1="5" y1="6" x2="10.5" y2="6"/><line x1="3" y1="9.5" x2="10.5" y2="9.5"/></svg>`,
+};
+
+const VALIGN_ICONS: Record<'top' | 'middle' | 'bottom', string> = {
+  top: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="1.5" x2="10.5" y2="1.5"/><path d="M6 10.5V4.5M6 4.5l-2 2M6 4.5l2 2"/></svg>`,
+  middle: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="6" x2="10.5" y2="6"/><path d="M6 1.5v2.2M6 10.5V8.3"/></svg>`,
+  bottom: `<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="1.5" y1="10.5" x2="10.5" y2="10.5"/><path d="M6 1.5v6M6 7.5l-2-2M6 7.5l2-2"/></svg>`,
+};
+
 function spawnTextEditor(opts: {
   pv: PageView;
   leftPx: number;
@@ -1446,7 +1478,9 @@ function spawnTextEditor(opts: {
   font?: { size: number; family: string; spacing: number };
   /** Blend into the markup graphic beneath (callout box) instead of a popup. */
   transparent?: boolean;
-  onCommit: (text: string, wPx: number, hPx: number) => void;
+  /** When set, a formatting toolbar (B/U, indent, spacing, align) shows. */
+  formatting?: EditorFormatting;
+  onCommit: (text: string, wPx: number, hPx: number, fmt?: EditorFormatting) => void;
   onCancel?: () => void;
 }): void {
   const ta = document.createElement('textarea');
@@ -1465,6 +1499,86 @@ function spawnTextEditor(opts: {
   for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'dblclick', 'wheel', 'contextmenu']) {
     ta.addEventListener(ev, (evt) => evt.stopPropagation());
   }
+
+  // ── Formatting toolbar (text / callout) ─────────────────────────────────
+  const fmt = opts.formatting ? { ...opts.formatting } : null;
+  let bar: HTMLElement | null = null;
+  const applyFmtPreview = (): void => {
+    if (!fmt) return;
+    ta.style.fontWeight = fmt.bold ? '700' : '400';
+    ta.style.textDecoration = fmt.underline ? 'underline' : 'none';
+    ta.style.textAlign = fmt.align;
+    ta.style.lineHeight = String(fmt.lineSpacing);
+    ta.style.paddingLeft = `${5 + fmt.indent * 12 * opts.pv.getScale()}px`;
+  };
+  if (fmt) {
+    bar = document.createElement('div');
+    bar.className = 'text-format-bar';
+    for (const ev of ['pointermove', 'pointerup', 'dblclick', 'wheel', 'contextmenu']) {
+      bar.addEventListener(ev, (evt) => evt.stopPropagation());
+    }
+    // Buttons must not steal focus from the textarea (blur = commit)
+    bar.addEventListener('pointerdown', (evt) => {
+      evt.stopPropagation();
+      if ((evt.target as HTMLElement).tagName !== 'SELECT') evt.preventDefault();
+    });
+
+    const actives: (() => void)[] = [];
+    const addBtn = (html: string, title: string, isOn: () => boolean, onClick: () => void): void => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tfb-btn';
+      b.innerHTML = html;
+      b.title = title;
+      b.addEventListener('click', () => {
+        onClick();
+        applyFmtPreview();
+        actives.forEach((f) => f());
+      });
+      actives.push(() => b.classList.toggle('on', isOn()));
+      bar!.appendChild(b);
+    };
+    const addSep = (): void => {
+      const s = document.createElement('span');
+      s.className = 'tfb-sep';
+      bar!.appendChild(s);
+    };
+
+    addBtn('<b>B</b>', 'Bold', () => fmt.bold, () => (fmt.bold = !fmt.bold));
+    addBtn('<u>U</u>', 'Underline', () => fmt.underline, () => (fmt.underline = !fmt.underline));
+    addSep();
+    addBtn('⇤', 'Decrease indent', () => false, () => (fmt.indent = Math.max(0, fmt.indent - 1)));
+    addBtn('⇥', 'Increase indent', () => fmt.indent > 0, () => (fmt.indent = Math.min(8, fmt.indent + 1)));
+    addSep();
+    for (const a of ['left', 'center', 'right'] as const) {
+      addBtn(ALIGN_ICONS[a], `Align ${a}`, () => fmt.align === a, () => (fmt.align = a));
+    }
+    addSep();
+    for (const v of ['top', 'middle', 'bottom'] as const) {
+      addBtn(VALIGN_ICONS[v], `Vertical align ${v}`, () => fmt.valign === v, () => (fmt.valign = v));
+    }
+    addSep();
+    const spacing = document.createElement('select');
+    spacing.className = 'tfb-spacing';
+    spacing.title = 'Row spacing';
+    spacing.innerHTML = [1, 1.15, 1.35, 1.5, 2]
+      .map((s) => `<option value="${s}" ${s === fmt.lineSpacing ? 'selected' : ''}>${s === 1 ? '1.0' : s}×</option>`)
+      .join('');
+    spacing.addEventListener('change', () => {
+      fmt.lineSpacing = Number(spacing.value);
+      applyFmtPreview();
+      ta.focus(); // the select took focus — hand it back before blur commits
+    });
+    bar.appendChild(spacing);
+
+    actives.forEach((f) => f());
+    applyFmtPreview();
+    // Sit just above the editor; flip below when there's no headroom
+    bar.style.left = `${opts.leftPx}px`;
+    bar.style.top = `${Math.max(2, opts.topPx - 34)}px`;
+    opts.pv.el.appendChild(bar);
+  }
+
   let done = false;
   const finish = (commit: boolean): void => {
     if (done) return;
@@ -1473,7 +1587,8 @@ function spawnTextEditor(opts: {
     const w = ta.offsetWidth;
     const h = ta.offsetHeight;
     ta.remove();
-    if (commit && text) opts.onCommit(text, w, h);
+    bar?.remove();
+    if (commit && text) opts.onCommit(text, w, h, fmt ?? undefined);
     else opts.onCancel?.();
   };
   ta.addEventListener('keydown', (evt) => {
@@ -1481,10 +1596,41 @@ function spawnTextEditor(opts: {
     if (evt.key === 'Escape') finish(false);
     if (evt.key === 'Enter' && (evt.ctrlKey || evt.metaKey)) finish(true);
   });
-  // Clicking anywhere outside the editor blurs it → commit + return to select
-  ta.addEventListener('blur', () => finish(true));
+  // Clicking anywhere outside the editor blurs it → commit + return to
+  // select. Focus moving INTO the toolbar (the spacing select) doesn't count.
+  ta.addEventListener('blur', (evt) => {
+    const to = (evt as FocusEvent).relatedTarget as HTMLElement | null;
+    if (to && bar && bar.contains(to)) return;
+    finish(true);
+  });
   opts.pv.el.appendChild(ta);
   requestAnimationFrame(() => ta.focus());
+}
+
+/** Initial toolbar formatting for an editor session, from overrides. */
+function initialFormatting(existing: { overrides?: TextMarkup['overrides'] } | undefined, spacing: number): EditorFormatting {
+  return {
+    bold: existing?.overrides?.bold ?? false,
+    underline: existing?.overrides?.underline ?? false,
+    indent: existing?.overrides?.indent ?? 0,
+    lineSpacing: spacing,
+    align: existing?.overrides?.align ?? 'left',
+    valign: existing?.overrides?.valign ?? 'top',
+  };
+}
+
+/** Toolbar formatting → overrides patch. Defaults become `undefined`, which
+ *  both clears a previously-set value on merge and drops out of the saved
+ *  JSON metadata. */
+function fmtToOverrides(f: EditorFormatting): Partial<NonNullable<TextMarkup['overrides']>> {
+  return {
+    bold: f.bold || undefined,
+    underline: f.underline || undefined,
+    indent: f.indent > 0 ? f.indent : undefined,
+    lineSpacing: f.lineSpacing !== 1.35 ? f.lineSpacing : undefined,
+    align: f.align !== 'left' ? f.align : undefined,
+    valign: f.valign !== 'top' ? f.valign : undefined,
+  };
 }
 
 function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: TextMarkup): void {
@@ -1499,18 +1645,27 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
     heightPx: existing ? existing.height * scale : undefined,
     initial: existing?.content ?? '',
     font,
-    onCommit: (text, wPx, hPx) => {
+    formatting: initialFormatting(existing, font.spacing),
+    onCommit: (text, wPx, hPx, fmt) => {
+      const f = fmt ?? initialFormatting(existing, font.spacing);
       const w = wPx / scale;
       // Grow the box to fit the wrapped text (the canvas clips to the box, so
       // a too-short box would otherwise swallow the overflow)
-      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, font.spacing);
+      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, f.lineSpacing, f.bold, f.indent);
       const h = Math.max(hPx / scale, contentH + 8);
       if (existing) {
         applyMarkupChange(
           'Edit text',
           docMarkups().map((m) =>
             m.id === existing.id
-              ? { ...existing, content: text, width: w, height: h, y: existing.y + existing.height - h }
+              ? {
+                  ...existing,
+                  content: text,
+                  width: w,
+                  height: h,
+                  y: existing.y + existing.height - h,
+                  overrides: { ...existing.overrides, ...fmtToOverrides(f) },
+                }
               : m,
           ),
         );
@@ -1524,6 +1679,7 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
           width: w,
           height: h,
           content: text,
+          overrides: fmtToOverrides(f),
         };
         applyMarkupChange('Add text', [...docMarkups(), markup]);
         returnToNavTool();
@@ -1568,11 +1724,13 @@ function openCalloutEditor(
     heightPx: existing ? existing.textHeight * scale : undefined,
     initial: existing?.content ?? '',
     font,
-    onCommit: (text, wPx, hPx) => {
+    formatting: initialFormatting(existing, font.spacing),
+    onCommit: (text, wPx, hPx, fmt) => {
       pv.clearSvg();
+      const f = fmt ?? initialFormatting(existing, font.spacing);
       const w = wPx / scale;
       // Grow the box to fit the wrapped text (the canvas clips to the box)
-      const contentH = measureTextBlockHeight(text, w - 8, font.size, font.family, font.spacing);
+      const contentH = measureTextBlockHeight(text, w - 8, font.size, font.family, f.lineSpacing, f.bold, f.indent);
       const h = Math.max(hPx / scale, contentH + 10);
       if (existing) {
         applyMarkupChange(
@@ -1585,6 +1743,7 @@ function openCalloutEditor(
                   textWidth: w,
                   textHeight: h,
                   textY: existing.textY + existing.textHeight - h,
+                  overrides: { ...existing.overrides, ...fmtToOverrides(f) },
                 }
               : m,
           ),
@@ -1602,6 +1761,7 @@ function openCalloutEditor(
           anchorY: anchor.y,
           content: text,
           arrowEnd: 'filled',
+          overrides: fmtToOverrides(f),
         };
         applyMarkupChange('Add callout', [...docMarkups(), markup]);
         returnToNavTool();
