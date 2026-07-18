@@ -450,6 +450,23 @@ export class PageView {
     }
   }
 
+  /** Dashed rubber-band rectangle for marquee (box) selection. */
+  drawMarquee(a: Point, b: Point): void {
+    this.clearSvg();
+    const ns = 'http://www.w3.org/2000/svg';
+    const S = this.scale;
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', String(Math.min(a.x, b.x) * S));
+    rect.setAttribute('y', String((this.pageHeight - Math.max(a.y, b.y)) * S));
+    rect.setAttribute('width', String(Math.abs(b.x - a.x) * S));
+    rect.setAttribute('height', String(Math.abs(b.y - a.y) * S));
+    rect.setAttribute('fill', 'rgba(47, 111, 224, 0.08)');
+    rect.setAttribute('stroke', '#2f6fe0');
+    rect.setAttribute('stroke-width', '1.5');
+    rect.setAttribute('stroke-dasharray', '6 4');
+    this.svgLayer.appendChild(rect);
+  }
+
   drawPreview(points: Point[], closed: boolean, color = '#002060'): void {
     this.clearSvg();
     if (points.length < 1) return;

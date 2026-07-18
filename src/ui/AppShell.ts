@@ -609,10 +609,10 @@ function wireRibbon(root: HTMLElement): void {
     ribbon.appendChild(group);
   }
 
-  // Edit group — Overlay + Snip icon buttons, following the Measure tools
+  // Overlay group — Overlay + Snip icon buttons, following the Measure tools
   const editGroup = document.createElement('div');
   editGroup.className = 'ribbon-group';
-  editGroup.innerHTML = `<span class="ribbon-label">Edit</span>`;
+  editGroup.innerHTML = `<span class="ribbon-label">Overlay</span>`;
   const editTools = document.createElement('div');
   editTools.className = 'ribbon-tools';
 
@@ -2011,10 +2011,6 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   const styleOptions = (['solid', 'dashed', 'dotted', 'centerline'] as const)
     .map((s) => `<option value="${s}" ${s === lineStyle ? 'selected' : ''}>${s}</option>`)
     .join('');
-  // Standard palette swatches + the color input as "More Colors…"
-  const swatches = `<div class="prop-swatches">${SWATCH_COLORS.map(
-    (c) => `<button class="swatch ${c === stroke ? 'active' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`,
-  ).join('')}</div>`;
 
   // Infill control (rectangle/ellipse/polygon/text/callout/area)
   let fillSection = '';
@@ -2022,12 +2018,8 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     const fillResolved = m.overrides?.fillColor !== undefined ? m.overrides.fillColor : (defaults?.fillColor ?? null);
     const fillOn = !!fillResolved;
     const fillVal = fillResolved ?? DEFAULT_COLOR;
-    const fillSwatches = `<div class="prop-swatches" data-fill-swatches ${fillOn ? '' : 'style="display:none"'}>${SWATCH_COLORS.map(
-      (c) => `<button class="swatch ${c === fillResolved ? 'active' : ''}" data-fill-color="${c}" style="background:${c}" title="${c}"></button>`,
-    ).join('')}</div>`;
     fillSection = `
-    <label>Infill <input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}> <input type="color" class="prop-color" data-prop="fillColor" value="${fillVal}" ${fillOn ? '' : 'disabled'} title="Fill color"></label>
-    ${fillSwatches}`;
+    <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>`;
   }
   const weightOptions =
     LINE_WEIGHT_OPTIONS.map(
@@ -2045,7 +2037,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
       (TEXT_SIZE_OPTIONS.includes(fontSize) ? '' : `<option value="${fontSize}" selected>${fontSize}</option>`);
     textSection = `
     <hr>
-    <label>Text color <input type="color" class="prop-color" data-prop="textColor" value="${textColor}" title="More colors…"></label>
+    <label>Text color <button type="button" class="color-box pp-color" data-cprop="textColor" style="background:${textColor}" title="Text color"></button></label>
     <label>Text size <select data-prop="fontSize">${sizeOpts}</select></label>
     <label>Font <select data-prop="fontFamily">
       ${FONT_FAMILIES.map((f) => `<option value="${f}" ${f === fontFamily ? 'selected' : ''}>${f}</option>`).join('')}
@@ -2128,8 +2120,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
       <div class="prop-head-text"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p></div>
     </div>
     <div class="prop-section-label">Appearance</div>
-    <label>Line <input type="color" class="prop-color" data-prop="strokeColor" value="${stroke}" title="More colors…"></label>
-    ${swatches}
+    <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
     ${fillSection}
     <label>Weight <select data-prop="lineWeight">${weightOptions}</select></label>
     <label>Style <select data-prop="lineStyle">${styleOptions}</select></label>
@@ -2198,22 +2189,6 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     if (opVal) opVal.textContent = `${Math.round(Number(opRange.value) * 100)}%`;
   });
 
-  // Standard-palette swatches set the stroke color (skip the fill swatches)
-  props.querySelectorAll<HTMLButtonElement>('.prop-swatches:not([data-fill-swatches]) .swatch[data-color]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const doc = getActiveDoc();
-      const m = doc?.markups.find((mk) => mk.id === selectedId);
-      if (!doc || !m) return;
-      const color = btn.dataset.color!;
-      const next = doc.markups.map((mk) =>
-        mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, strokeColor: color } } : mk,
-      );
-      import('../state/undo').then(({ applyMarkupChange }) =>
-        applyMarkupChange('Edit properties', next),
-      );
-    });
-  });
-
   const setFill = (value: string | null): void => {
     const doc = getActiveDoc();
     const m = doc?.markups.find((mk) => mk.id === selectedId);
@@ -2224,16 +2199,51 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     import('../state/undo').then(({ applyMarkupChange }) => applyMarkupChange('Edit fill', next));
   };
 
+  // Line / Infill / Text color wells open the standard swatch palette popup
+  // (plus "More colors…"), exactly like the page-default color boxes
+  props.querySelectorAll<HTMLButtonElement>('.pp-color').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const prop = btn.dataset.cprop as 'strokeColor' | 'fillColor' | 'textColor';
+      const doc = getActiveDoc();
+      const m = doc?.markups.find((mk) => mk.id === selectedId);
+      if (!doc || !m) return;
+      const defaults = doc.pageDefaults[m.pageIndex];
+      const cur =
+        prop === 'fillColor'
+          ? (m.overrides?.fillColor !== undefined ? m.overrides.fillColor : defaults?.fillColor) ?? DEFAULT_COLOR
+          : m.overrides?.[prop] ??
+            (prop === 'strokeColor' ? defaults?.strokeColor : defaults?.textColor) ??
+            DEFAULT_COLOR;
+      openSwatchPopup(btn, cur ?? DEFAULT_COLOR, (color) => {
+        if (prop === 'fillColor') {
+          setFill(color);
+        } else {
+          const fresh = getActiveDoc();
+          if (!fresh) return;
+          const next = fresh.markups.map((mk) =>
+            mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [prop]: color } } : mk,
+          );
+          import('../state/undo').then(({ applyMarkupChange }) =>
+            applyMarkupChange('Edit properties', next),
+          );
+        }
+        btn.style.background = color;
+      });
+    });
+  });
+
   // Infill enable/disable toggle
   const fillEnable = props.querySelector<HTMLInputElement>('[data-fill-enable]');
   fillEnable?.addEventListener('change', () => {
-    const colorInput = props.querySelector<HTMLInputElement>('[data-prop="fillColor"]');
-    setFill(fillEnable.checked ? (colorInput?.value || DEFAULT_COLOR) : null);
-  });
-
-  // Infill palette swatches
-  props.querySelectorAll<HTMLButtonElement>('[data-fill-color]').forEach((btn) => {
-    btn.addEventListener('click', () => setFill(btn.dataset.fillColor!));
+    if (!fillEnable.checked) {
+      setFill(null);
+      return;
+    }
+    const doc = getActiveDoc();
+    const m = doc?.markups.find((mk) => mk.id === selectedId);
+    const cur =
+      m?.overrides?.fillColor ?? doc?.pageDefaults[m?.pageIndex ?? 0]?.fillColor ?? DEFAULT_COLOR;
+    setFill(cur ?? DEFAULT_COLOR);
   });
 
   // Boolean flag checkboxes (polyline total length, polygon area)
@@ -2443,7 +2453,9 @@ function renderOverlayBar(root: HTMLElement): void {
     const select = document.createElement('select');
     select.innerHTML = `<option value="">— Page —</option>${Array.from({ length: doc.pageCount }, (_, i) => `<option value="${i}">Page ${i + 1}</option>`).join('')}`;
     const opacity = document.createElement('select');
-    opacity.innerHTML = ['20', '40', '60', '80'].map((v) => `<option value="${v}">${v}%</option>`).join('');
+    opacity.innerHTML = Array.from({ length: 11 }, (_, i) => i * 10)
+      .map((v) => `<option value="${v}" ${v === 100 ? 'selected' : ''}>${v}%</option>`)
+      .join('');
     const current = slots[slot];
     if (current) {
       select.value = String(current.pageIndex);

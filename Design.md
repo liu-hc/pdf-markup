@@ -87,7 +87,12 @@ returns to the last Navigate tool (Select or Zoom).
   direction; double middle-click resets to 100%.
 - **Select** — click a markup to select; drag to move; drag handles to resize;
   drag the corner-outside handles to **rotate** a rectangle/ellipse. Double-click
-  text/callout to edit its text.
+  text/callout to edit its text. Drag on empty canvas for a dashed **box
+  selection** (everything the box touches); Shift/Ctrl-click adds/removes from
+  the selection; a multi-selection moves as one and can be Cut/Copied/Pasted/
+  Deleted from the keyboard or the right-click menu (which keeps the
+  selection). Markups are clickable from every navigation tool — the Pan tool
+  only grabs the sheet when the click misses.
 
 ### Shapes
 - **Rectangle / Ellipse** — two clicks (opposite corners). Live preview while
@@ -122,8 +127,10 @@ returns to the last Navigate tool (Select or Zoom).
 - **Angle** — three clicks measure an angle.
 
 ### Page tools (Page Default bar)
-- **Overlay** — composite up to two other pages over the current one, with
-  per-slot opacity and an optional Photoshop-style **Multiply** blend.
+- **Overlay** — composite up to two other pages over the current page (each
+  page keeps its own overlay setup), with per-slot opacity (0–100% in 10%
+  steps, default 100%) and a Photoshop-style **Multiply** blend (on by
+  default).
 - **Snip** — drag a region to copy it (page + markups) to the clipboard; paste
   (Ctrl+V) places it with its lower-left corner at the cursor.
 - **Page Default controls** — Scale, Line/Fill/Text colors, Line Weight, Line

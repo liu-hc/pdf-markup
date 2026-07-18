@@ -73,7 +73,8 @@ export function createEmptyDoc(id: string, filename: string): PdfDocumentState {
     splitRatio: 0.5,
     overlayEnabled: false,
     overlaysByPage: {},
-    overlayMultiply: false,
+    // Multiply is the default blend — linework composites like tracing paper
+    overlayMultiply: true,
     clipboard: null,
     bookmarks: [],
   };
@@ -94,11 +95,17 @@ export function returnToNavTool(): void {
   setActiveTool(state.lastNavTool);
 }
 
+const NAV_TOOLS: readonly ToolId[] = ['select', 'flip', 'zoom', 'pan'];
+
 export function selectMarkups(ids: string[]): void {
+  // Selecting from a drawing tool switches to Select; selecting while on a
+  // navigation tool (flip/zoom/pan) keeps that tool — markups are clickable
+  // and editable from every navigation mode.
+  const keepTool = NAV_TOOLS.includes(state.activeTool);
   setState({
     selectedMarkupIds: ids,
-    activeTool: ids.length ? 'select' : state.activeTool,
-    ...(ids.length ? { lastNavTool: 'select' as const } : {}),
+    activeTool: ids.length && !keepTool ? 'select' : state.activeTool,
+    ...(ids.length && !keepTool ? { lastNavTool: 'select' as const } : {}),
   });
 }
 

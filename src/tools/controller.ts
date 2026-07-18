@@ -18,7 +18,7 @@ import type {
   ToolId,
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
-import { findMarkupAtPoint, cloneMarkup } from '../markups/hitTest';
+import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
 import { measureTextBlockHeight } from '../markups/draw';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
@@ -43,16 +43,29 @@ interface DrawState {
   pv: PageView | null;
 }
 
-/** Active move/resize of a committed markup (select tool). */
+/** Active move/resize of committed markups (navigation tools). A move drag
+ *  carries EVERY selected markup via `originals`; handle drags stay single. */
 interface EditState {
   mode: 'move' | 'handle';
   handleId: string;
   markupId: string;
   start: Point;
   original: Markup;
+  /** Snapshots of every markup being moved (multi-selection drags). */
+  originals: Map<string, Markup>;
   before: Markup[];
   pv: PageView;
   moved: boolean;
+}
+
+/** In-progress rubber-band (marquee) selection on empty canvas. */
+interface MarqueeState {
+  pv: PageView;
+  pageIndex: number;
+  start: Point;
+  /** Shift/Ctrl held: add to the existing selection instead of replacing. */
+  additive: boolean;
+  base: string[];
 }
 
 /** In-progress 3-click callout (anchor → kink → text). */
@@ -77,6 +90,7 @@ const CALLOUT_H = 48;
 
 let draw: DrawState = { start: null, points: [], pageIndex: 0, pv: null };
 let edit: EditState | null = null;
+let marquee: MarqueeState | null = null;
 let calloutDraw: CalloutDraw | null = null;
 let dimDraw: DimDraw | null = null;
 /** In-progress 2-click calibration (point 1 → point 2 → prompt for length). */
@@ -151,10 +165,12 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
 
   // Middle-button drag pans on EVERY tool. Left-button pans with the Pan tool,
   // or Alt+Left on the Navigate tools (flip/zoom) where it has no other meaning.
+  // Middle-drag pans on every tool; Alt+Left pans on the navigation tools.
+  // The Pan tool's own left-drag starts later, AFTER the markup hit test, so
+  // markups stay clickable in pan mode too.
   if (
     e.button === 1 ||
-    (e.button === 0 && tool === 'pan') ||
-    (e.button === 0 && e.altKey && (tool === 'flip' || tool === 'zoom'))
+    (e.button === 0 && e.altKey && (tool === 'flip' || tool === 'zoom' || tool === 'pan'))
   ) {
     panning = true;
     panStart = {
@@ -169,19 +185,21 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  if (tool === 'flip' || tool === 'zoom' || tool === 'pan') return;
-
   // An inline editor is open: this click is outside it (clicks inside are
   // stopped by the editor). Let the editor's blur commit the text and return
   // to select; don't begin a new markup here.
   if (isInlineEditing()) return;
 
-  if (tool === 'select') {
-    // 1) Mouse-down on a selection handle → start resize/reshape drag
+  // Markups are clickable/editable on EVERY navigation tool (select, flip,
+  // zoom, pan) — the Pan tool only grabs the sheet when the click misses.
+  if (tool === 'select' || tool === 'flip' || tool === 'zoom' || tool === 'pan') {
+    if (e.button !== 0) return;
+    const selected = getState().selectedMarkupIds;
+
+    // 1) Mouse-down on a selection handle → resize/reshape (single selection)
     const handleId = (e.target as HTMLElement | null)?.dataset?.handle;
-    const selId = getState().selectedMarkupIds[0];
-    if (handleId && selId) {
-      const m = doc.markups.find((mk) => mk.id === selId);
+    if (handleId && selected.length === 1) {
+      const m = doc.markups.find((mk) => mk.id === selected[0]);
       if (m && m.pageIndex === pv.pageIndex) {
         edit = {
           mode: 'handle',
@@ -189,6 +207,7 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
           markupId: m.id,
           start: p,
           original: cloneMarkup(m, m.id),
+          originals: new Map(),
           before: [...doc.markups],
           pv,
           moved: false,
@@ -201,11 +220,12 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
     }
 
     const hit = findMarkupAtPoint(doc.markups, pv.pageIndex, p);
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
     // 2) Double-click a text-bearing markup → edit its text inline.
     //    isDoubleClick (manual timer), NOT e.detail: preventDefault() on the
     //    first pointerdown stops the browser's click counter from advancing.
-    if (hit && isDoubleClick(e) && (hit.type === 'text' || hit.type === 'callout' || hit.type === 'sticky')) {
+    if (hit && !additive && isDoubleClick(e) && (hit.type === 'text' || hit.type === 'callout' || hit.type === 'sticky')) {
       lastPolyClick = { time: 0, x: 0, y: 0 }; // consume the click pair
       selectMarkups([hit.id]);
       openEditorForExisting(pv, hit);
@@ -215,19 +235,33 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
     // Arm the double-click detector for the next click
     recordClick(e);
 
-    selectMarkups(hit ? [hit.id] : []);
-    ws.redrawAllMarkups();
-    // Clicking empty space clears the now-stale selection handles
-    if (!hit) pv.clearSvg();
-
-    // 3) Mouse-down on a markup body → start move drag
+    // 3) Mouse-down on a markup body → select (Shift/Ctrl toggles membership)
+    //    and start a move drag that carries the WHOLE selection
     if (hit) {
+      let ids: string[];
+      if (additive) {
+        ids = selected.includes(hit.id)
+          ? selected.filter((i) => i !== hit.id)
+          : [...selected, hit.id];
+      } else {
+        // Clicking a member of a multi-selection keeps the group together
+        ids = selected.includes(hit.id) ? selected : [hit.id];
+      }
+      selectMarkups(ids);
+      ws.redrawAllMarkups();
+      if (!ids.includes(hit.id)) {
+        e.preventDefault();
+        return; // additive click removed it — nothing to drag
+      }
+      const byId = new Map(doc.markups.map((mk) => [mk.id, mk] as const));
+      const dragIds = ids.filter((id) => byId.get(id)?.pageIndex === pv.pageIndex);
       edit = {
         mode: 'move',
         handleId: '',
         markupId: hit.id,
         start: p,
         original: cloneMarkup(hit, hit.id),
+        originals: new Map(dragIds.map((id) => [id, cloneMarkup(byId.get(id)!, id)] as const)),
         before: [...doc.markups],
         pv,
         moved: false,
@@ -235,7 +269,31 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
       setGrabbing(true);
       capturePointer(e);
       e.preventDefault();
+      return;
     }
+
+    // 4) Empty canvas: the Pan tool grabs the sheet…
+    if (tool === 'pan') {
+      panning = true;
+      panStart = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: ws.scrollEl.scrollLeft,
+        scrollTop: ws.scrollEl.scrollTop,
+      };
+      ws.contentEl.style.cursor = 'grabbing';
+      e.preventDefault();
+      return;
+    }
+    // …the other navigation tools rubber-band a selection box
+    marquee = { pv, pageIndex: pv.pageIndex, start: p, additive, base: additive ? [...selected] : [] };
+    if (!additive && selected.length) {
+      selectMarkups([]);
+      ws.redrawAllMarkups();
+    }
+    pv.clearSvg();
+    capturePointer(e);
+    e.preventDefault();
     return;
   }
 
@@ -295,7 +353,7 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  // Move / resize drag on a committed markup
+  // Move / resize drag on committed markups
   if (edit) {
     const ep = edit.pv.screenToPage(e.clientX, e.clientY);
     const dx = ep.x - edit.start.x;
@@ -303,13 +361,28 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     // ~3px dead zone so a plain click doesn't register as a move
     if (!edit.moved && Math.hypot(dx, dy) * edit.pv.getScale() < 3) return;
     edit.moved = true;
-    const updated =
-      edit.mode === 'move'
-        ? translateMarkup(edit.original, dx, dy)
-        : edit.handleId === 'rotate'
+    if (edit.mode === 'move') {
+      // Translate EVERY markup in the drag set (multi-selection moves whole)
+      const originals = edit.originals;
+      replaceMarkups(
+        docMarkups().map((mk) => {
+          const orig = originals.get(mk.id);
+          return orig ? translateMarkup(orig, dx, dy) : mk;
+        }),
+      );
+    } else {
+      const updated =
+        edit.handleId === 'rotate'
           ? applyRotate(edit.original, edit.start, ep, e.shiftKey)
           : applyHandleDrag(edit.original, edit.handleId, ep, e.shiftKey);
-    updateMarkup(edit.markupId, () => updated);
+      updateMarkup(edit.markupId, () => updated);
+    }
+    return;
+  }
+
+  // Rubber-band selection box (dashed) while dragging over empty canvas
+  if (marquee) {
+    marquee.pv.drawMarquee(marquee.start, marquee.pv.screenToPage(e.clientX, e.clientY));
     return;
   }
 
@@ -431,6 +504,34 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
       ws.redrawAllMarkups();
     }
     edit = null;
+    return;
+  }
+
+  // Finish a rubber-band selection: everything the box touches gets selected
+  if (marquee) {
+    const mq = marquee;
+    marquee = null;
+    const p2 = mq.pv.screenToPage(e.clientX, e.clientY);
+    mq.pv.clearSvg();
+    const x0 = Math.min(mq.start.x, p2.x);
+    const x1 = Math.max(mq.start.x, p2.x);
+    const y0 = Math.min(mq.start.y, p2.y);
+    const y1 = Math.max(mq.start.y, p2.y);
+    const dragPx = Math.max(x1 - x0, y1 - y0) * mq.pv.getScale();
+    if (dragPx > 4) {
+      const d = getActiveDoc();
+      if (d) {
+        const hits = d.markups
+          .filter((m) => m.pageIndex === mq.pageIndex && !m.locked)
+          .filter((m) => {
+            const b = getMarkupBounds(m);
+            return b.x <= x1 && b.x + b.w >= x0 && b.y <= y1 && b.y + b.h >= y0;
+          })
+          .map((m) => m.id);
+        selectMarkups(mq.additive ? [...new Set([...mq.base, ...hits])] : hits);
+      }
+    }
+    ws.redrawAllMarkups();
     return;
   }
 
@@ -723,11 +824,19 @@ export function handleContextMenu(e: MouseEvent, ws: Workspace): void {
   if (!doc || !pv) return;
   const p = pv.screenToPage(e.clientX, e.clientY);
   const hit = findMarkupAtPoint(doc.markups, pv.pageIndex, p);
-  if (!hit) return; // not over a markup → leave the native menu
-  e.preventDefault();
-  selectMarkups([hit.id]);
-  ws.redrawAllMarkups();
+  let selected = getState().selectedMarkupIds;
 
+  // Right-clicking an unselected markup selects it; right-clicking a member
+  // of the current selection (or empty canvas) keeps the selection intact.
+  if (hit && !selected.includes(hit.id)) {
+    selectMarkups([hit.id]);
+    selected = [hit.id];
+    ws.redrawAllMarkups();
+  }
+  const hasClipboard = (doc.clipboard?.length ?? 0) > 0;
+  if (!hit && selected.length === 0 && !hasClipboard) return; // native menu
+
+  e.preventDefault();
   document.querySelector('.context-menu')?.remove();
   const menu = document.createElement('div');
   menu.className = 'context-menu';
@@ -737,14 +846,30 @@ export function handleContextMenu(e: MouseEvent, ws: Workspace): void {
     applyMarkupChange(label, next);
     ws.redrawAllMarkups();
   };
-  const actions: ([string, () => void] | 'sep')[] = [
-    ['Bring to Front', () => apply(moveToFront(docMarkups(), hit.id), 'Bring to front')],
-    ['Bring Forward', () => apply(nudgeOrder(docMarkups(), hit.id, 1), 'Bring forward')],
-    ['Send Backward', () => apply(nudgeOrder(docMarkups(), hit.id, -1), 'Send backward')],
-    ['Send to Back', () => apply(moveToBack(docMarkups(), hit.id), 'Send to back')],
-    'sep',
-    ['Delete', () => { apply(docMarkups().filter((m) => m.id !== hit.id), 'Delete'); selectMarkups([]); }],
-  ];
+  const editThen = (action: string): (() => void) => () => {
+    handleEditAction(action);
+    ws.redrawAllMarkups();
+  };
+  const actions: ([string, () => void] | 'sep')[] = [];
+  // Draw-order ops apply to a single markup
+  if (hit && selected.length === 1) {
+    actions.push(
+      ['Bring to Front', () => apply(moveToFront(docMarkups(), hit.id), 'Bring to front')],
+      ['Bring Forward', () => apply(nudgeOrder(docMarkups(), hit.id, 1), 'Bring forward')],
+      ['Send Backward', () => apply(nudgeOrder(docMarkups(), hit.id, -1), 'Send backward')],
+      ['Send to Back', () => apply(moveToBack(docMarkups(), hit.id), 'Send to back')],
+      'sep',
+    );
+  }
+  if (selected.length) {
+    actions.push(['Cut', editThen('cut')], ['Copy', editThen('copy')]);
+  }
+  if (hasClipboard) {
+    actions.push(['Paste', editThen('paste')]);
+  }
+  if (selected.length) {
+    actions.push('sep', [`Delete${selected.length > 1 ? ` (${selected.length})` : ''}`, editThen('delete')]);
+  }
   const close = (): void => menu.remove();
   for (const a of actions) {
     if (a === 'sep') {
@@ -1934,6 +2059,11 @@ export function setupKeyboardShortcuts(): void {
     }
     // Escape cancels an in-progress drawing or move/resize drag
     if (e.key === 'Escape') {
+      if (marquee) {
+        marquee.pv.clearSvg();
+        marquee = null;
+        return;
+      }
       if (calloutDraw) {
         calloutDraw.pv.clearSvg();
         calloutDraw = null;
