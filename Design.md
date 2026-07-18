@@ -113,9 +113,10 @@ returns to the last Navigate tool (Select or Zoom).
 ### Annotation
 - **Text** — two clicks size a box, then type in place (font, size, line spacing,
   infill).
-- **Callout** — three clicks: arrow tip, leader elbow, then the text box; then
-  type in place. The leader runs horizontally out of the box to the elbow, then
-  to the arrow. Arrow style/size adjustable.
+- **Callout** — two clicks: arrow tip, then the text box; type in place. The
+  leader exits the box horizontally with a default 25pt flat run to the elbow,
+  then goes diagonally to the arrow; the elbow distance stays adjustable via
+  its drag handle. Arrow style/size adjustable.
 
 ### Measure (all honor the page Scale)
 - **Calibrate** — click two points across a known distance, then enter the

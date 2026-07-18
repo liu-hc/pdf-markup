@@ -492,7 +492,7 @@ function showHelpDialog(): void {
       ${fig(guideAnnotate, 'Annotation tools: text box, callout, sticky note')}
       <ul>
         <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
-        <li><strong>Callout (Q)</strong> — three clicks: arrow tip → leader elbow → text box, then type. The leader always exits the box horizontally and bends at the elbow, which has its own drag handle.</li>
+        <li><strong>Callout (Q)</strong> — two clicks: arrow tip → text box, then type. The leader exits the box horizontally (default 25pt flat run) and bends at the elbow, which keeps its own drag handle for adjusting the distance.</li>
         <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
       </ul>
     </div>

@@ -68,12 +68,11 @@ interface MarqueeState {
   base: string[];
 }
 
-/** In-progress 3-click callout (anchor → kink → text). */
+/** In-progress 2-click callout (arrow tip → text box). */
 interface CalloutDraw {
   pv: PageView;
   pageIndex: number;
   anchor: Point;
-  kink: Point | null;
 }
 
 /** In-progress 3-click dimension (start → end → offset/location). */
@@ -87,6 +86,22 @@ interface DimDraw {
 /** Default callout box size in page points (grows as the user types/resizes). */
 const CALLOUT_W = 150;
 const CALLOUT_H = 48;
+/** Default length of the flat leader run out of the box edge (adjustable
+ *  afterwards by dragging the kink handle). */
+const CALLOUT_KINK_RUN = 25;
+
+/** Default elbow: a flat CALLOUT_KINK_RUN out of the box edge facing the
+ *  anchor, at the box's mid-height (the box→kink segment is always flat). */
+function defaultCalloutKink(
+  box: { x: number; y: number; w: number; h: number },
+  anchor: Point,
+): Point {
+  const onRight = anchor.x >= box.x + box.w / 2;
+  return {
+    x: onRight ? box.x + box.w + CALLOUT_KINK_RUN : box.x - CALLOUT_KINK_RUN,
+    y: box.y + box.h / 2,
+  };
+}
 
 let draw: DrawState = { start: null, points: [], pageIndex: 0, pv: null };
 let edit: EditState | null = null;
@@ -466,17 +481,15 @@ function isCloseHover(tool: ToolId, p: Point): boolean {
 /** Draw the callout draft after each click / on cursor move. */
 function renderCalloutPreview(cursor: Point): void {
   if (!calloutDraw) return;
-  const { pv, anchor, kink } = calloutDraw;
+  const { pv, anchor } = calloutDraw;
   const color = previewColor(pv.pageIndex);
-  if (!kink) {
-    // Stage 1: anchor placed, dragging toward the elbow
-    pv.drawCalloutGuide([anchor, cursor], null, color, anchor);
-    return;
-  }
-  // Stage 2: elbow placed, dragging toward the text box (top-left at cursor)
+  // Live preview of the FINAL callout: box (top-left at the cursor), flat
+  // default run to the kink, diagonal to the anchor, real arrowhead at the
+  // tip — identical geometry to the committed rendering.
   const box = { x: cursor.x, y: cursor.y - CALLOUT_H, w: CALLOUT_W, h: CALLOUT_H };
+  const kink = defaultCalloutKink(box, anchor);
   const leader = calloutLeader(box.x, box.y, box.w, box.h, anchor.x, anchor.y, kink.x, kink.y);
-  pv.drawCalloutGuide([anchor, kink, leader.exit], box, color, anchor);
+  pv.drawCalloutGuide([leader.exit, leader.kink, anchor], box, color, { tip: anchor, from: leader.kink });
 }
 
 export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
@@ -1087,39 +1100,33 @@ function commitTwoClick(tool: ToolId, a: Point, b: Point, e: PointerEvent, pageI
 // ── Callout (3-click: anchor → kink → text, typed in place) ──────────────────
 
 function handleCalloutClick(pv: PageView, p: Point): void {
-  const color = previewColor(pv.pageIndex);
   if (!calloutDraw) {
-    // Click 1: arrow anchor
-    calloutDraw = { pv, pageIndex: pv.pageIndex, anchor: { ...p }, kink: null };
-    pv.drawCalloutGuide([], null, color, calloutDraw.anchor);
+    // Click 1: the arrow tip — the live preview takes over on pointer move
+    calloutDraw = { pv, pageIndex: pv.pageIndex, anchor: { ...p } };
     return;
   }
-  if (!calloutDraw.kink) {
-    // Click 2: leader elbow
-    calloutDraw.kink = { ...p };
-    pv.drawCalloutGuide([calloutDraw.anchor, calloutDraw.kink], null, color, calloutDraw.anchor);
-    return;
-  }
-  // Click 3: top-left of the text box — open the in-place editor
-  const { anchor, kink, pageIndex } = calloutDraw;
+  // Click 2: the text box (top-left at the click) — open the in-place editor
+  const { anchor, pageIndex } = calloutDraw;
   calloutDraw = null;
-  startCalloutTextEntry(pv, pageIndex, anchor, kink, { ...p });
+  startCalloutTextEntry(pv, pageIndex, anchor, { ...p });
 }
 
-/** Show the callout box + leader and let the user type directly in the box. */
+/** Show the callout box + leader and let the user type directly in the box.
+ *  The elbow defaults to a flat CALLOUT_KINK_RUN out of the box edge facing
+ *  the anchor; it stays adjustable via the kink handle after placement. */
 function startCalloutTextEntry(
   pv: PageView,
   pageIndex: number,
   anchor: Point,
-  kink: Point,
   topLeft: Point,
 ): void {
   const scale = pv.getScale();
   const ph = pv.getPageHeight();
   const color = previewColor(pageIndex);
   const box = { x: topLeft.x, y: topLeft.y - CALLOUT_H, w: CALLOUT_W, h: CALLOUT_H };
+  const kink = defaultCalloutKink(box, anchor);
   const leader = calloutLeader(box.x, box.y, box.w, box.h, anchor.x, anchor.y, kink.x, kink.y);
-  pv.drawCalloutGuide([anchor, kink, leader.exit], box, color, anchor);
+  pv.drawCalloutGuide([leader.exit, leader.kink, anchor], box, color, { tip: anchor, from: leader.kink });
 
   spawnTextEditor({
     pv,
@@ -1134,18 +1141,22 @@ function startCalloutTextEntry(
       pv.clearSvg();
       const w = wPx / scale;
       const h = hPx / scale;
+      // The editor may have grown/resized the box — place the default elbow
+      // relative to the FINAL box so the flat run stays CALLOUT_KINK_RUN
+      const finalBox = { x: topLeft.x, y: topLeft.y - h, w, h };
+      const finalKink = defaultCalloutKink(finalBox, anchor);
       const markup: CalloutMarkup = {
         id: uid(),
         type: 'callout',
         pageIndex,
-        textX: topLeft.x,
-        textY: topLeft.y - h,
+        textX: finalBox.x,
+        textY: finalBox.y,
         textWidth: w,
         textHeight: h,
         anchorX: anchor.x,
         anchorY: anchor.y,
-        kinkX: kink.x,
-        kinkY: kink.y,
+        kinkX: finalKink.x,
+        kinkY: finalKink.y,
         content: text,
         arrowEnd: 'filled',
       };
@@ -1874,16 +1885,20 @@ function openCalloutEditor(
           ),
         );
       } else {
+        const nb = { x: textAt.x, y: textAt.y - h, w, h };
+        const nk = defaultCalloutKink(nb, anchor);
         const markup: CalloutMarkup = {
           id: uid(),
           type: 'callout',
           pageIndex,
-          textX: textAt.x,
-          textY: textAt.y - h,
+          textX: nb.x,
+          textY: nb.y,
           textWidth: w,
           textHeight: h,
           anchorX: anchor.x,
           anchorY: anchor.y,
+          kinkX: nk.x,
+          kinkY: nk.y,
           content: text,
           arrowEnd: 'filled',
           overrides: fmtToOverrides(f),

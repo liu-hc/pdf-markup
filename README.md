@@ -91,9 +91,9 @@ ribbon, and each one can be overridden afterwards in the inspector.
 - **Text (T)** — two clicks size the box, then type directly on the sheet.
   The box **border** uses the Line color, the glyphs use the **Text** color,
   and the background uses the **Infill** color — all three independent.
-- **Callout (Q)** — three clicks: arrow tip → leader elbow → text box, then
-  type. The leader always exits the box horizontally and bends at the elbow,
-  which has its own drag handle.
+- **Callout (Q)** — two clicks: arrow tip → text box, then type. The leader
+  exits the box horizontally (default 25pt flat run) and bends at the elbow,
+  which keeps its own drag handle for adjusting the distance.
 - **Sticky note** — a folded-corner note icon whose comment text stays off
   the drawing; double-click to edit.
 

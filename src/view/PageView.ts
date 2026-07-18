@@ -502,7 +502,9 @@ export class PageView {
     linePts: Point[],
     box: { x: number; y: number; w: number; h: number } | null,
     color: string,
-    anchorDot: Point | null,
+    /** Filled arrowhead at `tip`, pointing away from `from` (the elbow) —
+     *  same 1:1 triangle geometry as the committed rendering. */
+    arrow: { tip: Point; from: Point } | null,
   ): void {
     this.clearSvg();
     const ns = 'http://www.w3.org/2000/svg';
@@ -535,14 +537,24 @@ export class PageView {
       this.svgLayer.appendChild(polyline);
     }
 
-    if (anchorDot) {
-      const s = toS(anchorDot);
-      const dot = document.createElementNS(ns, 'circle');
-      dot.setAttribute('cx', String(s.x));
-      dot.setAttribute('cy', String(s.y));
-      dot.setAttribute('r', '3.5');
-      dot.setAttribute('fill', color);
-      this.svgLayer.appendChild(dot);
+    if (arrow) {
+      const tip = toS(arrow.tip);
+      const from = toS(arrow.from);
+      const dx = from.x - tip.x;
+      const dy = from.y - tip.y;
+      if (Math.hypot(dx, dy) > 0.5) {
+        // Match the committed callout arrow: hypotenuse = weight × 2.5 ×
+        // ARROW_LEN(6), half-angle atan(0.5) → base width equals depth
+        const ang = Math.atan2(dy, dx);
+        const spread = Math.atan(0.5);
+        const len = 2.5 * S * 6; // default line weight 1
+        const p1 = { x: tip.x + len * Math.cos(ang - spread), y: tip.y + len * Math.sin(ang - spread) };
+        const p2 = { x: tip.x + len * Math.cos(ang + spread), y: tip.y + len * Math.sin(ang + spread) };
+        const tri = document.createElementNS(ns, 'polygon');
+        tri.setAttribute('points', `${tip.x},${tip.y} ${p1.x},${p1.y} ${p2.x},${p2.y}`);
+        tri.setAttribute('fill', color);
+        this.svgLayer.appendChild(tri);
+      }
     }
   }
 
