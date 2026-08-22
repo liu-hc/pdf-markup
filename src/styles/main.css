@@ -58,6 +58,12 @@
   --glass-rail-a: rgba(52, 76, 106, 0.42);
   --glass-rail-b: rgba(26, 40, 60, 0.4);
   --glass-blur:   blur(36px) saturate(150%);
+  /* The side panels float over the PAGE, which is mostly white. Plain frost let
+     the backdrop through at ~97% white, compositing the panel to light grey
+     (162,166,172) — on which the light ink scale measured 1.07:1 (locked rows)
+     to 2.22:1 (names), all far below the 4.5:1 AA floor. Darkening the backdrop
+     keeps the frosted look while making the panel dark whatever is behind it. */
+  --glass-blur-panel: blur(36px) saturate(150%) brightness(0.45);
   --glass-radius: 16px;
   /* Gradient border: bright light-catch top-left, faint along the sides,
      and a softer return glint at the bottom-right */
@@ -673,8 +679,8 @@ input, select, textarea, button {
   min-height: 0;
   overflow: hidden;
   border-radius: var(--glass-radius);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur-panel);
+  backdrop-filter: var(--glass-blur-panel);
   box-shadow: var(--glass-edge);
   transition: width 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
 }
@@ -1441,7 +1447,8 @@ body.grabbing * {
 .right-panel {
   --ink: #f0f4fa;
   --ink-2: #c3cfdf;
-  --ink-3: #8fa2ba;
+  --ink-3: #cbd7e6;  /* was #8fa2ba — carries values and locked rows, so it has
+                        to clear AA rather than just read as "dimmer" */
   --panel-border: rgba(255, 255, 255, 0.14);
 }
 
