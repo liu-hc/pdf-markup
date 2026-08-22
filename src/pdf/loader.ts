@@ -130,33 +130,94 @@ export async function openFilePicker(): Promise<void> {
   await loadPdfFromFile(file, handle);
 }
 
+/** A handle plus the permission methods Chromium exposes on it. */
+type WritableHandle = FileSystemFileHandle & {
+  queryPermission?: (o: { mode: string }) => Promise<PermissionState>;
+  requestPermission?: (o: { mode: string }) => Promise<PermissionState>;
+};
+
+/** Ensure we may write through `handle`. A handle from showOpenFilePicker is
+ *  read-only, so writing an opened file needs an explicit readwrite grant.
+ *  Must be called while the triggering gesture still counts as activation. */
+async function ensureWritePermission(handle: WritableHandle): Promise<boolean> {
+  if (!handle.queryPermission || !handle.requestPermission) return true; // pre-permission impls
+  if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+  return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+}
+
+/** Write the document back to disk.
+ *
+ *  Ordering here is load-bearing. showSaveFilePicker() and requestPermission()
+ *  both require *transient user activation*, which Chromium drops ~5 s after the
+ *  click. Exporting a large drawing set takes longer than that, so doing the
+ *  export first — as this used to — meant the picker was reached with the
+ *  activation already expired and threw SecurityError. Nothing caught it, so
+ *  Save and Save As appeared to do nothing at all. Every call that needs the
+ *  gesture now happens BEFORE the export.
+ *
+ *  Throws on failure (including AbortError when the user cancels the picker);
+ *  callers that are driven by a user gesture should use saveDocumentInteractive. */
 export async function saveDocument(docId: string, saveAs = false): Promise<void> {
   const doc = getState().documents.find((d) => d.id === docId);
   if (!doc || !doc.pdfBytes) return;
 
-  const { exportPdf } = await import('./export');
-  const bytes = await exportPdf(doc);
+  const canPick = 'showSaveFilePicker' in window;
+  let handle = doc.fileHandle as WritableHandle | null;
 
-  let handle = doc.fileHandle;
+  // --- gesture-dependent work first ---
+  if (!saveAs && handle && !(await ensureWritePermission(handle))) {
+    handle = null; // declined in-place write — fall through to a picker
+  }
   if (saveAs || !handle) {
-    if (!('showSaveFilePicker' in window)) {
+    if (!canPick) {
+      // No File System Access API (Firefox, Safari): deliver via download.
+      const { exportPdf } = await import('./export');
+      const bytes = await exportPdf(doc);
       downloadBytes(bytes, doc.filename);
+      // The bytes reached the user, so stop treating the doc as unsaved —
+      // otherwise a dirty document could never be closed on these browsers.
+      updateDoc(docId, (d) => ({ ...d, pdfBytes: bytes, dirty: false }));
       return;
     }
-    const w = window as Window & {
+    // cast via unknown: the `in` test above is held in `canPick`, so TS has not
+    // narrowed `window` at this point
+    const w = window as unknown as Window & {
       showSaveFilePicker: (opts: object) => Promise<FileSystemFileHandle>;
     };
-    handle = await w.showSaveFilePicker({
+    handle = (await w.showSaveFilePicker({
       suggestedName: doc.filename,
       types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
-    });
+    })) as WritableHandle;
     updateDoc(docId, (d) => ({ ...d, fileHandle: handle, filename: handle!.name }));
   }
 
-  const writable = await handle!.createWritable();
+  // --- no further activation needed past this point ---
+  const { exportPdf } = await import('./export');
+  const bytes = await exportPdf(doc);
+  const writable = await handle.createWritable();
   await writable.write(new Blob([new Uint8Array(bytes)]));
   await writable.close();
   updateDoc(docId, (d) => ({ ...d, pdfBytes: bytes, dirty: false }));
+}
+
+/** saveDocument for gesture-driven callers: a cancelled picker is silent, any
+ *  real failure is reported instead of vanishing into an unhandled rejection. */
+export async function saveDocumentInteractive(docId: string, saveAs = false): Promise<boolean> {
+  try {
+    await saveDocument(docId, saveAs);
+    return true;
+  } catch (err) {
+    if ((err as DOMException)?.name === 'AbortError') return false; // user cancelled
+    const { showErrorDialog } = await import('../ui/notify');
+    const msg = (err as Error)?.message ?? String(err);
+    showErrorDialog(
+      'Could not save',
+      (err as DOMException)?.name === 'NotAllowedError'
+        ? 'Permission to write the file was denied. Try File \u25b8 Save As\u2026 and pick a location.'
+        : `The file could not be written. ${msg}`,
+    );
+    return false;
+  }
 }
 
 export async function flattenDocument(docId: string): Promise<void> {
@@ -201,8 +262,15 @@ function downloadBytes(bytes: Uint8Array, filename: string): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // The anchor has to be in the document for the click to count in Firefox, and
+  // revoking the URL in the same tick cancels the download that just started.
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 30_000);
 }
 
 export async function insertBlankPage(

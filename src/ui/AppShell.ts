@@ -13,7 +13,7 @@ import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
-import { openFilePicker, saveDocument, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
+import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
 import { parseArchScale, parseEngScale } from '../util/geometry';
 // User-guide illustrations (shared with the README)
@@ -175,7 +175,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
 function wireMenus(root: HTMLElement, ws: Workspace): void {
   root.querySelector('.btn-save')?.addEventListener('click', () => {
     const doc = getActiveDoc();
-    if (doc) saveDocument(doc.id);
+    if (doc) void saveDocumentInteractive(doc.id);
   });
 
   root.querySelectorAll('.dropdown li[data-action]').forEach((el) => {
@@ -193,10 +193,10 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           await openFilePicker();
           break;
         case 'save':
-          if (doc) await saveDocument(doc.id);
+          if (doc) await saveDocumentInteractive(doc.id);
           break;
         case 'save-as':
-          if (doc) await saveDocument(doc.id, true);
+          if (doc) await saveDocumentInteractive(doc.id, true);
           break;
         case 'close':
           if (doc) await requestCloseDocument(doc.id);
@@ -392,11 +392,8 @@ async function requestCloseDocument(docId: string): Promise<boolean> {
     const choice = await askSaveBeforeClose(`"${doc.filename}" has unsaved changes.`);
     if (choice === 'cancel') return false;
     if (choice === 'save') {
-      try {
-        await saveDocument(docId);
-      } catch {
-        return false; // save dialog cancelled — keep the document open
-      }
+      // false = cancelled picker or a reported failure; either way keep it open
+      if (!(await saveDocumentInteractive(docId))) return false;
       if (getState().documents.find((d) => d.id === docId)?.dirty) return false;
     }
   }

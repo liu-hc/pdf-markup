@@ -2136,7 +2136,7 @@ export function setupKeyboardShortcuts(): void {
     if (mod && e.key === 's') {
       e.preventDefault();
       const doc = getActiveDoc();
-      if (doc) import('../pdf/loader').then(({ saveDocument }) => saveDocument(doc.id));
+      if (doc) void import('../pdf/loader').then(({ saveDocumentInteractive }) => saveDocumentInteractive(doc.id));
     }
     if (mod && e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
