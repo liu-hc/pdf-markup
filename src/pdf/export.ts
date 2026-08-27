@@ -1,7 +1,145 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import type { PDFFont } from 'pdf-lib';
-import type { PdfDocumentState, Markup, PageDefaults } from '../state/types';
+import { PDFDocument, rgb, StandardFonts, BlendMode, LineCapStyle, degrees } from 'pdf-lib';
+import type { PDFFont, Color } from 'pdf-lib';
+import type { ArrowHead, PdfDocumentState, Markup, PageDefaults, Point } from '../state/types';
 import { META_KEY } from './importMarkups';
+import { resolveStyle } from '../markups/draw';
+import {
+  angleDegrees,
+  arrowBarbs,
+  arrowBodyInset,
+  calloutLeader,
+  cloudOutline,
+  dashPattern,
+  dimensionGeometry,
+  dist,
+  ellipseBezier,
+  polygonArea,
+  polygonCentroid,
+  polylineLength,
+  polylineMidpoint,
+  rotatedRectCorners,
+  shortenToward,
+} from '../util/geometry';
+import { formatAngle, formatArea, formatLength } from '../util/units';
+
+/* ── Vector plumbing ──────────────────────────────────────────────────────
+   pdf-lib's drawSvgPath translates to (x, y) and then flips the Y axis
+   (scale(1, -1)), because SVG counts Y downward. Passing the origin and
+   negating every Y in the path therefore puts a page-coordinate point
+   exactly where it belongs — which lets one path builder serve every shape
+   below, arrowheads and cloud scallops included. */
+
+const ORIGIN = { x: 0, y: 0 };
+
+/** SVG path data for a run of page-coordinate points. */
+function pathOf(points: Point[], close = false): string {
+  if (!points.length) return '';
+  const d = points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${-p.y}`).join(' ');
+  return close ? `${d} Z` : d;
+}
+
+interface StrokeOpts {
+  color: Color;
+  width: number;
+  opacity: number;
+  dash?: number[];
+  cap?: LineCapStyle;
+}
+
+function strokePath(page: PdfPage, d: string, o: StrokeOpts): void {
+  if (!d) return;
+  page.drawSvgPath(d, {
+    ...ORIGIN,
+    borderColor: o.color,
+    borderWidth: o.width,
+    borderOpacity: o.opacity,
+    ...(o.dash && o.dash.length ? { borderDashArray: o.dash } : {}),
+    ...(o.cap !== undefined ? { borderLineCap: o.cap } : {}),
+  });
+}
+
+function fillPath(
+  page: PdfPage,
+  d: string,
+  o: { color: Color; opacity: number; multiply?: boolean },
+): void {
+  if (!d) return;
+  page.drawSvgPath(d, {
+    ...ORIGIN,
+    color: o.color,
+    opacity: o.opacity,
+    ...(o.multiply ? { blendMode: BlendMode.Multiply } : {}),
+  });
+}
+
+type PdfPage = ReturnType<PDFDocument['getPage']>;
+
+/** Arrowhead at `tip`, pointing away from `awayFrom`. Filled heads are a solid
+ *  triangle; open heads are two stroked barbs — matching the canvas. */
+function drawArrowHead(
+  page: PdfPage,
+  tip: Point,
+  awayFrom: Point,
+  head: ArrowHead,
+  size: number,
+  color: Color,
+  opacity: number,
+  strokeWidth: number,
+): void {
+  if (head === 'none') return;
+  const [b1, b2] = arrowBarbs(tip, awayFrom, size);
+  if (head === 'open') {
+    strokePath(page, pathOf([b1, tip, b2]), { color, width: strokeWidth, opacity });
+  } else {
+    fillPath(page, pathOf([tip, b1, b2], true), { color, opacity });
+  }
+}
+
+/** A measurement label centred on (cx, cy) and rotated by `angle` radians,
+ *  with the same white backing the canvas paints so it stays readable over
+ *  linework. */
+function drawCenteredLabel(
+  page: PdfPage,
+  font: PDFFont,
+  text: string,
+  cx: number,
+  cy: number,
+  size: number,
+  color: Color,
+  opacity: number,
+  angle = 0,
+): void {
+  if (!text) return;
+  const w = font.widthOfTextAtSize(text, size);
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  // Text runs along u and stands up along n; drop the baseline so the glyph
+  // body straddles the centre point rather than sitting on it.
+  const u = { x: cos, y: sin };
+  const n = { x: -sin, y: cos };
+  const pad = size * 0.18;
+  const halfW = w / 2 + pad;
+  const halfH = size * 0.62;
+  const corner = (su: number, sn: number): Point => ({
+    x: cx + u.x * su * halfW + n.x * sn * halfH,
+    y: cy + u.y * su * halfW + n.y * sn * halfH,
+  });
+  fillPath(page, pathOf([corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], true), {
+    color: rgb(1, 1, 1),
+    opacity: opacity * 0.85,
+  });
+  const originX = cx - u.x * (w / 2) - n.x * size * 0.35;
+  const originY = cy - u.y * (w / 2) - n.y * size * 0.35;
+  page.drawText(text, {
+    x: originX,
+    y: originY,
+    size,
+    font,
+    color,
+    opacity,
+    rotate: degrees((angle * 180) / Math.PI),
+  });
+}
 
 /** Map UI font families onto the 14 PDF standard fonts. Arial is the default. */
 const FONT_MAP: Record<string, { regular: StandardFonts; bold: StandardFonts }> = {
@@ -158,208 +296,354 @@ export async function flattenPdf(doc: PdfDocumentState): Promise<Uint8Array> {
   return new Uint8Array(await pdf.save());
 }
 
+/** Render one markup into the page, matching markups/draw.ts.
+ *
+ *  Everything the canvas draws is drawn here: dimension extension lines,
+ *  ticks and labels; callout elbow leaders; arrowheads; cloud scallops;
+ *  dashed styles; polyline length and polygon area labels; angle arcs;
+ *  rotation; and separate line/fill opacity with the Multiply blend. If the
+ *  two ever disagree, the shared geometry in util/geometry.ts is the thing to
+ *  fix — both sides read their shapes from there. */
 async function embedMarkup(
   pdf: PDFDocument,
-  page: ReturnType<PDFDocument['getPage']>,
+  page: PdfPage,
   markup: Markup,
   defaults: PageDefaults,
   fonts: FontCache,
 ): Promise<void> {
-  const stroke = parseColor(markup.overrides?.strokeColor ?? defaults.strokeColor);
-  const fill = markup.overrides?.fillColor ?? defaults.fillColor;
-  const lineWeight = markup.overrides?.lineWeight ?? defaults.lineWeight;
-  // Linework and infill carry separate alphas; the infill falls back to the
-  // line alpha for markups made before the two were split.
-  const lineOpacity = markup.overrides?.opacity ?? 1;
-  const fillOpacity = markup.overrides?.fillOpacity ?? lineOpacity;
-  // Text / callout box outline, off when Border is unchecked
-  const border = markup.overrides?.border ?? true;
-  const fontSize = markup.overrides?.fontSize ?? defaults.fontSize ?? 12;
-  const fontFamily = markup.overrides?.fontFamily ?? defaults.fontFamily ?? 'Arial';
-  const lineSpacing = markup.overrides?.lineSpacing ?? 1.35;
+  const style = resolveStyle(markup, defaults);
+  const stroke = parseColor(style.stroke);
+  const textColor = parseColor(style.textColor);
+  const lineWeight = style.lineWeight;
+  const lineOpacity = style.opacity;
+  const fillOpacity = style.fillOpacity;
+  const multiply = style.fillMultiply;
+  const dash = dashPattern(style.lineStyle, lineWeight);
+  const fontSize = style.fontSize;
+  const labelFont = await getFont(pdf, fonts, style.fontFamily);
+
+  /** Stroke in the markup's own colour, weight and line style. */
+  const line = (pts: Point[], close = false): void =>
+    strokePath(page, pathOf(pts, close), {
+      color: stroke,
+      width: lineWeight,
+      opacity: lineOpacity,
+      ...(dash.length ? { dash } : {}),
+    });
+  /** Fill in the markup's own infill colour/alpha, honouring Multiply. */
+  const fill = (d: string): void => {
+    if (!style.fill) return;
+    fillPath(page, d, { color: parseColor(style.fill), opacity: fillOpacity, multiply });
+  };
+  const label = (text: string, x: number, y: number, angle = 0): void =>
+    drawCenteredLabel(page, labelFont, text, x, y, fontSize, textColor, lineOpacity, angle);
 
   switch (markup.type) {
     case 'rectangle':
     case 'highlighter': {
-      const isHl = markup.type === 'highlighter';
-      page.drawRectangle({
-        x: markup.x,
-        y: markup.y,
-        width: markup.width,
-        height: markup.height,
-        // Highlighter is a borderless translucent yellow fill
-        borderColor: isHl ? undefined : stroke,
-        borderWidth: isHl ? 0 : lineWeight,
-        color: isHl
-          ? parseColor(markup.overrides?.fillColor ?? '#f5c542')
-          : fill
-            ? parseColor(fill)
-            : undefined,
-        opacity: isHl ? 0.35 : fillOpacity,
-        borderOpacity: isHl ? 0.35 : lineOpacity,
-      });
-      break;
-    }
-    case 'ellipse': {
-      page.drawEllipse({
-        x: markup.cx - markup.rx,
-        y: markup.cy - markup.ry,
-        xScale: markup.rx,
-        yScale: markup.ry,
-        borderColor: stroke,
-        borderWidth: lineWeight,
-        color: fill ? parseColor(fill) : undefined,
-        opacity: fillOpacity,
-        borderOpacity: lineOpacity,
-      });
-      break;
-    }
-    case 'line':
-    case 'dimension': {
-      page.drawLine({
-        start: { x: markup.x1, y: markup.y1 },
-        end: { x: markup.x2, y: markup.y2 },
-        thickness: lineWeight,
-        color: stroke,
-        opacity: lineOpacity,
-      });
-      break;
-    }
-    case 'inkHighlight': {
-      // Fat translucent yellow pen — one round-capped segment per step
-      if (!markup.points.length) break;
-      const inkColor = parseColor(markup.overrides?.strokeColor ?? '#f5c542');
-      const { LineCapStyle } = await import('pdf-lib');
-      for (let i = 1; i < markup.points.length; i++) {
-        page.drawLine({
-          start: markup.points[i - 1]!,
-          end: markup.points[i]!,
-          thickness: markup.penWidth,
-          color: inkColor,
+      const corners = rotatedRectCorners(
+        markup.x,
+        markup.y,
+        markup.width,
+        markup.height,
+        markup.type === 'rectangle' ? markup.rotation ?? 0 : 0,
+      );
+      const d = pathOf(corners, true);
+      if (markup.type === 'highlighter') {
+        // Borderless translucent swipe — its own fixed alpha, like on screen
+        fillPath(page, d, {
+          color: parseColor(style.fill ?? '#f5c542'),
           opacity: 0.35,
-          lineCap: LineCapStyle.Round,
+          multiply,
         });
+        break;
       }
+      fill(d);
+      line(corners, true);
       break;
     }
-    case 'text': {
-      // Box (fill + border) matching the on-screen rendering
-      page.drawRectangle({
-        x: markup.x,
-        y: markup.y,
-        width: markup.width,
-        height: markup.height,
-        borderColor: border ? stroke : undefined,
-        borderWidth: border ? lineWeight : 0,
-        color: fill ? parseColor(fill) : undefined,
-        opacity: fillOpacity,
-        borderOpacity: lineOpacity,
-      });
-      const font = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
-      drawFormattedText(
-        page,
-        font,
-        markup.content,
-        { x: markup.x, y: markup.y, w: markup.width, h: markup.height },
-        3,
-        fontSize,
-        lineSpacing,
-        parseColor(markup.overrides?.textColor ?? defaults.textColor),
-        {
-          underline: markup.overrides?.underline ?? false,
-          indent: markup.overrides?.indent ?? 0,
-          align: markup.overrides?.align ?? 'left',
-          valign: markup.overrides?.valign ?? 'top',
-        },
+
+    case 'ellipse': {
+      const { start, curves } = ellipseBezier(
+        markup.cx,
+        markup.cy,
+        markup.rx,
+        markup.ry,
+        markup.rotation ?? 0,
       );
+      const d =
+        `M ${start.x} ${-start.y} ` +
+        curves
+          .map(([c1, c2, e]) => `C ${c1.x} ${-c1.y} ${c2.x} ${-c2.y} ${e.x} ${-e.y}`)
+          .join(' ') +
+        ' Z';
+      fill(d);
+      strokePath(page, d, {
+        color: stroke,
+        width: lineWeight,
+        opacity: lineOpacity,
+        ...(dash.length ? { dash } : {}),
+      });
       break;
     }
-    case 'sticky': {
-      const font = await getFont(pdf, fonts, fontFamily);
-      page.drawText('*', { x: markup.x, y: markup.y, size: 14, font, color: rgb(0.96, 0.77, 0.26) });
+
+    case 'line': {
+      const s = { x: markup.x1, y: markup.y1 };
+      const e = { x: markup.x2, y: markup.y2 };
+      const size = lineWeight * (markup.arrowSize ?? 1);
+      const head1 = markup.arrowStart ?? 'none';
+      const head2 = markup.arrowEnd ?? 'none';
+      // Pull the body back so a thick stroke can't blunt the arrow tip
+      line([
+        shortenToward(s, e, arrowBodyInset(head1, size, lineWeight)),
+        shortenToward(e, s, arrowBodyInset(head2, size, lineWeight)),
+      ]);
+      drawArrowHead(page, s, e, head1, size, stroke, lineOpacity, lineWeight);
+      drawArrowHead(page, e, s, head2, size, stroke, lineOpacity, lineWeight);
       break;
     }
-    case 'polyline':
-    case 'polygon':
+
+    case 'dimension': {
+      // Offset dimension line + extension lines + end ticks + the value,
+      // mirroring the canvas exactly (see the 'dimension' case in draw.ts).
+      const offset = markup.offset ?? 0;
+      const p1 = { x: markup.x1, y: markup.y1 };
+      const p2 = { x: markup.x2, y: markup.y2 };
+      const g = dimensionGeometry(p1.x, p1.y, p2.x, p2.y, offset);
+      const ux = g.ux;
+      const uy = g.uy;
+      const px = g.nx;
+      const py = g.ny;
+      const gap = 3;
+      const over = 5;
+      const tick = 5;
+
+      line([g.d1, g.d2]);
+      for (const [ps, ds] of [
+        [p1, g.d1],
+        [p2, g.d2],
+      ] as [Point, Point][]) {
+        const ex = ds.x - ps.x;
+        const ey = ds.y - ps.y;
+        const el = Math.hypot(ex, ey);
+        if (el > 0.5) {
+          const evx = ex / el;
+          const evy = ey / el;
+          line([
+            { x: ps.x + evx * gap, y: ps.y + evy * gap },
+            { x: ds.x + evx * over, y: ds.y + evy * over },
+          ]);
+        } else {
+          // offset 0: a short perpendicular stick through the measured point
+          line([
+            { x: ds.x + px * (tick + 2), y: ds.y + py * (tick + 2) },
+            { x: ds.x - px * (tick + 2), y: ds.y - py * (tick + 2) },
+          ]);
+        }
+      }
+
+      if ((markup.tickStyle ?? 'slash') === 'slash') {
+        // Architectural slash on the opposite 45 degree diagonal
+        const tx = (ux - px) / Math.SQRT2;
+        const ty = (uy - py) / Math.SQRT2;
+        for (const q of [g.d1, g.d2]) {
+          line([
+            { x: q.x - tx * tick, y: q.y - ty * tick },
+            { x: q.x + tx * tick, y: q.y + ty * tick },
+          ]);
+        }
+      } else {
+        drawArrowHead(page, g.d1, g.d2, 'filled', lineWeight, stroke, lineOpacity, lineWeight);
+        drawArrowHead(page, g.d2, g.d1, 'filled', lineWeight, stroke, lineOpacity, lineWeight);
+      }
+
+      const text =
+        markup.customLabel !== undefined
+          ? markup.customLabel
+          : formatLength(dist(p1, p2), defaults.scaleFactor, markup.roundTo);
+      // Label sits clear of the measured points, reading along the dim line
+      const loff = 11;
+      let k: number;
+      if (Math.abs(offset) > 0.5) {
+        k = (g.d1.x - p1.x) * px + (g.d1.y - p1.y) * py >= 0 ? loff : -loff;
+      } else {
+        k = py < 0 || (py === 0 && px > 0) ? -loff : loff;
+      }
+      let a = Math.atan2(uy, ux);
+      if (a > Math.PI / 2) a -= Math.PI;
+      else if (a < -Math.PI / 2) a += Math.PI;
+      label(text, g.mid.x + px * k, g.mid.y + py * k, a);
+      break;
+    }
+
     case 'cloud': {
+      if (markup.points.length < 3) break;
+      fill(pathOf(markup.points, true));
+      strokePath(page, pathOf(cloudOutline(markup.points), false), {
+        color: stroke,
+        width: lineWeight,
+        opacity: lineOpacity,
+      });
+      break;
+    }
+
+    case 'polygon': {
       if (markup.points.length < 2) break;
-      for (let i = 1; i < markup.points.length; i++) {
-        page.drawLine({
-          start: markup.points[i - 1]!,
-          end: markup.points[i]!,
-          thickness: lineWeight,
-          color: stroke,
-          opacity: lineOpacity,
-        });
-      }
-      // Close polygon and cloud paths
-      if (markup.type === 'polygon' || markup.type === 'cloud') {
-        page.drawLine({
-          start: markup.points[markup.points.length - 1]!,
-          end: markup.points[0]!,
-          thickness: lineWeight,
-          color: stroke,
-          opacity: lineOpacity,
-        });
+      fill(pathOf(markup.points, true));
+      line(markup.points, true);
+      if (markup.showArea) {
+        const c = polygonCentroid(markup.points);
+        label(formatArea(polygonArea(markup.points), defaults.scaleFactor, markup.decimals), c.x, c.y);
       }
       break;
     }
-    case 'callout': {
-      page.drawLine({
-        start: { x: markup.textX, y: markup.textY },
-        end: { x: markup.anchorX, y: markup.anchorY },
-        thickness: lineWeight,
+
+    case 'polyline': {
+      if (markup.points.length < 2) break;
+      const pts = markup.points;
+      const size = lineWeight * (markup.arrowSize ?? 1);
+      const head1 = markup.arrowStart ?? 'none';
+      const head2 = markup.arrowEnd ?? 'none';
+      const body = pts.map((p) => ({ ...p }));
+      const last = body.length - 1;
+      const insS = arrowBodyInset(head1, size, lineWeight);
+      const insE = arrowBodyInset(head2, size, lineWeight);
+      if (insS) body[0] = shortenToward(body[0]!, body[1]!, insS);
+      if (insE) body[last] = shortenToward(body[last]!, body[last - 1]!, insE);
+      line(body);
+      drawArrowHead(page, pts[0]!, pts[1]!, head1, size, stroke, lineOpacity, lineWeight);
+      drawArrowHead(page, pts[last]!, pts[last - 1]!, head2, size, stroke, lineOpacity, lineWeight);
+      if (markup.showLength) {
+        const mid = polylineMidpoint(pts);
+        label(formatLength(polylineLength(pts), defaults.scaleFactor), mid.x, mid.y + 9);
+      }
+      break;
+    }
+
+    case 'inkHighlight': {
+      if (markup.points.length < 2) break;
+      strokePath(page, pathOf(markup.points), {
         color: stroke,
+        width: markup.penWidth,
+        opacity: lineOpacity,
+        cap: LineCapStyle.Round,
+      });
+      break;
+    }
+
+    case 'text': {
+      const box = { x: markup.x, y: markup.y, w: markup.width, h: markup.height };
+      const d = pathOf(
+        [
+          { x: box.x, y: box.y },
+          { x: box.x + box.w, y: box.y },
+          { x: box.x + box.w, y: box.y + box.h },
+          { x: box.x, y: box.y + box.h },
+        ],
+        true,
+      );
+      fill(d);
+      if (style.border) line([
+        { x: box.x, y: box.y },
+        { x: box.x + box.w, y: box.y },
+        { x: box.x + box.w, y: box.y + box.h },
+        { x: box.x, y: box.y + box.h },
+      ], true);
+      const font = await getFont(pdf, fonts, style.fontFamily, style.bold);
+      drawFormattedText(page, font, markup.content, box, 3, fontSize, style.lineSpacing, textColor, {
+        underline: style.underline,
+        indent: style.indent,
+        align: style.align,
+        valign: style.valign,
+      });
+      break;
+    }
+
+    case 'callout': {
+      const box = { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight };
+      const leader = calloutLeader(
+        box.x,
+        box.y,
+        box.w,
+        box.h,
+        markup.anchorX,
+        markup.anchorY,
+        markup.kinkX,
+        markup.kinkY,
+      );
+      const anchor = { x: markup.anchorX, y: markup.anchorY };
+      const head = markup.arrowEnd ?? 'filled';
+      // Callout heads use a 2.5x larger base than plain lines
+      const size = lineWeight * 2.5 * (markup.arrowSize ?? 1);
+      // Elbow leader: out of the box edge, to the kink, then on to the anchor
+      line([
+        leader.exit,
+        leader.kink,
+        shortenToward(anchor, leader.kink, arrowBodyInset(head, size, lineWeight)),
+      ]);
+      drawArrowHead(page, anchor, leader.kink, head, size, stroke, lineOpacity, lineWeight);
+
+      const corners = [
+        { x: box.x, y: box.y },
+        { x: box.x + box.w, y: box.y },
+        { x: box.x + box.w, y: box.y + box.h },
+        { x: box.x, y: box.y + box.h },
+      ];
+      // Box infill: the user's colour, else the cream default the canvas uses
+      fillPath(page, pathOf(corners, true), {
+        color: style.fill ? parseColor(style.fill) : rgb(1, 0.996, 0.96),
+        opacity: fillOpacity,
+        multiply,
+      });
+      if (style.border) line(corners, true);
+      const font = await getFont(pdf, fonts, style.fontFamily, style.bold);
+      drawFormattedText(page, font, markup.content, box, 4, fontSize, style.lineSpacing, textColor, {
+        underline: style.underline,
+        indent: style.indent,
+        align: style.align,
+        valign: style.valign,
+      });
+      break;
+    }
+
+    case 'sticky': {
+      // Folded-corner note icon, matching the canvas glyph
+      const s = 18;
+      const fold = s * 0.35;
+      const x = markup.x;
+      const y = markup.y;
+      const body = [
+        { x, y },
+        { x: x + s, y },
+        { x: x + s, y: y + s - fold },
+        { x: x + s - fold, y: y + s },
+        { x, y: y + s },
+      ];
+      fillPath(page, pathOf(body, true), { color: rgb(0.96, 0.77, 0.26), opacity: lineOpacity });
+      strokePath(page, pathOf(body, true), {
+        color: rgb(0.66, 0.48, 0.08),
+        width: 1,
         opacity: lineOpacity,
       });
-      // Text box (cream default fill, like the canvas) + wrapped text
-      page.drawRectangle({
-        x: markup.textX,
-        y: markup.textY,
-        width: markup.textWidth,
-        height: markup.textHeight,
-        borderColor: border ? stroke : undefined,
-        borderWidth: border ? lineWeight : 0,
-        color: fill ? parseColor(fill) : rgb(1, 0.996, 0.96),
-        opacity: fillOpacity,
-        borderOpacity: lineOpacity,
-      });
-      const calloutFont = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
-      drawFormattedText(
+      strokePath(
         page,
-        calloutFont,
-        markup.content,
-        { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight },
-        4,
-        fontSize,
-        lineSpacing,
-        parseColor(markup.overrides?.textColor ?? defaults.textColor),
-        {
-          underline: markup.overrides?.underline ?? false,
-          indent: markup.overrides?.indent ?? 0,
-          align: markup.overrides?.align ?? 'left',
-          valign: markup.overrides?.valign ?? 'top',
-        },
+        pathOf([
+          { x: x + s - fold, y: y + s },
+          { x: x + s - fold, y: y + s - fold },
+          { x: x + s, y: y + s - fold },
+        ]),
+        { color: rgb(0.66, 0.48, 0.08), width: 1, opacity: lineOpacity },
       );
       break;
     }
+
     case 'measureAngle': {
-      page.drawLine({
-        start: { x: markup.vertex.x, y: markup.vertex.y },
-        end: { x: markup.p1.x, y: markup.p1.y },
-        thickness: lineWeight,
-        color: stroke,
-        opacity: lineOpacity,
-      });
-      page.drawLine({
-        start: { x: markup.vertex.x, y: markup.vertex.y },
-        end: { x: markup.p2.x, y: markup.p2.y },
-        thickness: lineWeight,
-        color: stroke,
-        opacity: lineOpacity,
-      });
+      line([markup.p1, markup.vertex, markup.p2]);
+      const deg = angleDegrees(markup.p1, markup.vertex, markup.p2);
+      label(formatAngle(deg), markup.vertex.x, markup.vertex.y + 8);
       break;
     }
+
     case 'snipImage': {
       try {
         const b64 = markup.imageData.replace(/^data:image\/\w+;base64,/, '');
@@ -370,6 +654,7 @@ async function embedMarkup(
           y: markup.y,
           width: markup.width,
           height: markup.height,
+          opacity: lineOpacity,
         });
       } catch {
         // skip if PNG embedding fails

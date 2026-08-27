@@ -2288,3 +2288,11 @@ body.grabbing * {
   outline-offset: -3px;
   background: var(--accent-dim);
 }
+
+/* Platform note above the shortcut table in the user guide */
+.help-note {
+  margin: 0 0 10px;
+  font-size: var(--font-sm);
+  color: var(--text-2);
+  line-height: 1.5;
+}

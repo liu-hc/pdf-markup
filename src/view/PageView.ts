@@ -14,6 +14,19 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
    - Renders happen offscreen and blit on completion: the previous bitmap
      stays visible (stretched) instead of flashing blank. */
 const MAX_BASE_PIXELS = 16_000_000;
+
+/** Device pixels per CSS pixel, read fresh each time so dragging the window
+ *  between a Retina laptop panel and an external 1x monitor re-resolves.
+ *
+ *  Everything the app rasterises — the PDF, the crisp detail pass, overlays
+ *  and the markup layers — sizes its BACKING STORE in device pixels while its
+ *  CSS box stays in CSS pixels. Without this the whole viewer renders at 1
+ *  bitmap pixel per CSS pixel, which a Retina MacBook (dpr 2) and a Windows
+ *  laptop at 125-150% scaling both upscale — soft linework and fuzzy text on
+ *  exactly the machines this app is used on. */
+function dpr(): number {
+  return Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+}
 /** Extra margin (fraction of the viewport) rendered around the visible region
  *  by the detail pass / markup canvas, so small pans don't need a redraw. */
 const REGION_MARGIN = 0.3;
@@ -114,10 +127,18 @@ export class PageView {
     return true;
   }
 
-  /** Largest render scale whose full-page bitmap stays within the pixel cap. */
+  /** Largest render scale whose full-page bitmap stays within the pixel cap.
+   *  Expressed in DEVICE pixels per PDF point, so the bitmap matches the
+   *  screen rather than being upscaled by the browser. */
   getRenderScale(): number {
-    const px = this.pageWidth * this.pageHeight * this.scale * this.scale;
-    return px > 0 && px > MAX_BASE_PIXELS ? this.scale * Math.sqrt(MAX_BASE_PIXELS / px) : this.scale;
+    const target = this.scale * dpr();
+    const px = this.pageWidth * this.pageHeight * target * target;
+    return px > 0 && px > MAX_BASE_PIXELS ? target * Math.sqrt(MAX_BASE_PIXELS / px) : target;
+  }
+
+  /** Device-pixel scale the screen is actually asking for. */
+  private deviceScale(): number {
+    return this.scale * dpr();
   }
 
   hasBase(): boolean {
@@ -126,7 +147,7 @@ export class PageView {
 
   /** True when the base bitmap already matches the screen resolution. */
   baseIsCrisp(): boolean {
-    return this.baseScale >= this.scale - 1e-6;
+    return this.baseScale >= this.deviceScale() - 1e-6;
   }
 
   cancelRenders(): void {
@@ -183,14 +204,17 @@ export class PageView {
     const cur = this.region;
     if (next.x === cur.x && next.y === cur.y && next.w === cur.w && next.h === cur.h) return false;
     this.region = next;
+    const d = dpr();
+    const bw = Math.max(1, Math.round(next.w * d));
+    const bh = Math.max(1, Math.round(next.h * d));
     for (const mc of [this.markupCanvas, this.multiplyCanvas]) {
       mc.style.left = `${next.x}px`;
       mc.style.top = `${next.y}px`;
       mc.style.width = `${next.w}px`;
       mc.style.height = `${next.h}px`;
-      if (mc.width !== next.w || mc.height !== next.h) {
-        mc.width = next.w;
-        mc.height = next.h;
+      if (mc.width !== bw || mc.height !== bh) {
+        mc.width = bw;
+        mc.height = bh;
       }
     }
     return true;
@@ -209,19 +233,20 @@ export class PageView {
       return;
     }
     const { x, y, w, h } = this.region;
-    const key = `${x},${y},${w},${h}@${this.scale}`;
+    const d = dpr();
+    const key = `${x},${y},${w},${h}@${this.scale}@${d}`;
     if (key === this._detailKey) return;
     this._detailTask?.cancel();
-    const viewport = page.getViewport({ scale: this.scale });
+    const viewport = page.getViewport({ scale: this.deviceScale() });
     const off = document.createElement('canvas');
-    off.width = w;
-    off.height = h;
+    off.width = Math.ceil(w * d);
+    off.height = Math.ceil(h * d);
     const task = page.render({
       canvasContext: off.getContext('2d')!,
       viewport,
       canvas: off,
       // Shift the render so the region's top-left lands at the canvas origin
-      transform: [1, 0, 0, 1, -x, -y],
+      transform: [1, 0, 0, 1, -x * d, -y * d],
     });
     this._detailTask = task;
     try {
@@ -231,8 +256,8 @@ export class PageView {
     }
     if (this._detailTask !== task) return;
     this._detailTask = null;
-    this.detailCanvas.width = w;
-    this.detailCanvas.height = h;
+    this.detailCanvas.width = off.width;
+    this.detailCanvas.height = off.height;
     this.detailCanvas.getContext('2d')!.drawImage(off, 0, 0);
     this.detailCanvas.style.left = `${x}px`;
     this.detailCanvas.style.top = `${y}px`;
@@ -319,11 +344,14 @@ export class PageView {
     // Multiply-flagged infills go on their own blended canvas beneath the
     // normal one; that canvas stays empty (and unblended) when nothing uses it.
     const multiplied = pageMarkups.filter((m) => hasMultiplyFill(m, defaults));
+    const d = dpr();
     const mctx = this.multiplyCanvas.getContext('2d')!;
     mctx.setTransform(1, 0, 0, 1, 0, 0);
     mctx.clearRect(0, 0, this.multiplyCanvas.width, this.multiplyCanvas.height);
     this.multiplyCanvas.style.mixBlendMode = multiplied.length ? 'multiply' : '';
     if (multiplied.length) {
+      // Draw in CSS-pixel space; the device-pixel backing store is a scale away
+      mctx.setTransform(d, 0, 0, d, 0, 0);
       mctx.translate(-this.region.x, -this.region.y);
       for (const m of multiplied) {
         drawMarkupOnCanvas(mctx, m, defaults, this.scale, this.pageHeight, 'multiply');
@@ -335,6 +363,7 @@ export class PageView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.markupCanvas.width, this.markupCanvas.height);
     // The canvas covers only the visible region — shift page space into it
+    ctx.setTransform(d, 0, 0, d, 0, 0);
     ctx.translate(-this.region.x, -this.region.y);
     for (const m of pageMarkups) {
       drawMarkupOnCanvas(ctx, m, defaults, this.scale, this.pageHeight);
@@ -345,38 +374,35 @@ export class PageView {
   /** Composite PDF (base + detail) and markups for a layout-CSS-px region —
    *  used by the Snip tool. */
   captureRegion(x: number, y: number, w: number, h: number): HTMLCanvasElement {
+    // Capture at device resolution so a snip is as sharp as the screen it
+    // came from. Inputs are CSS px; every source canvas is device px.
+    const d = dpr();
     const tmp = document.createElement('canvas');
-    tmp.width = Math.max(1, Math.round(w));
-    tmp.height = Math.max(1, Math.round(h));
+    tmp.width = Math.max(1, Math.round(w * d));
+    tmp.height = Math.max(1, Math.round(h * d));
     const ctx = tmp.getContext('2d')!;
-    // Base bitmap, stretched from render scale to layout scale
+    // Base bitmap, stretched from its render scale to the capture scale
     if (this.baseScale > 0) {
       const k = this.baseScale / this.scale;
       ctx.drawImage(this.pdfCanvas, x * k, y * k, w * k, h * k, 0, 0, tmp.width, tmp.height);
     }
     // Crisp detail region, where available
     if (this.detailCanvas.style.display !== 'none' && this._detailKey) {
-      ctx.drawImage(
-        this.detailCanvas,
-        x - parseFloat(this.detailCanvas.style.left || '0'),
-        y - parseFloat(this.detailCanvas.style.top || '0'),
-        w,
-        h,
-        0,
-        0,
-        tmp.width,
-        tmp.height,
-      );
+      const dx = (x - parseFloat(this.detailCanvas.style.left || '0')) * d;
+      const dy = (y - parseFloat(this.detailCanvas.style.top || '0')) * d;
+      ctx.drawImage(this.detailCanvas, dx, dy, w * d, h * d, 0, 0, tmp.width, tmp.height);
     }
     // Markups (region canvases — shift into their space). The multiply layer
     // blends with what's already been composited, matching the screen.
+    const mx = (x - this.region.x) * d;
+    const my = (y - this.region.y) * d;
     if (this.multiplyCanvas.style.mixBlendMode === 'multiply') {
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(this.multiplyCanvas, x - this.region.x, y - this.region.y, w, h, 0, 0, tmp.width, tmp.height);
+      ctx.drawImage(this.multiplyCanvas, mx, my, w * d, h * d, 0, 0, tmp.width, tmp.height);
       ctx.restore();
     }
-    ctx.drawImage(this.markupCanvas, x - this.region.x, y - this.region.y, w, h, 0, 0, tmp.width, tmp.height);
+    ctx.drawImage(this.markupCanvas, mx, my, w * d, h * d, 0, 0, tmp.width, tmp.height);
     return tmp;
   }
 

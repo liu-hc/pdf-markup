@@ -14,6 +14,11 @@ import {
   dist,
   dimensionGeometry,
   calloutLeader,
+  arrowBarbs,
+  arrowBodyInset,
+  dashPattern,
+  shortenToward,
+  CLOUD_ARC_R,
 } from '../util/geometry';
 import { formatLength, formatArea, formatAngle } from '../util/units';
 
@@ -504,51 +509,7 @@ export function drawMarkupOnCanvas(
 }
 
 function applyLineStyle(ctx: CanvasRenderingContext2D, style: LineStyle, width: number): void {
-  switch (style) {
-    case 'dashed':
-      ctx.setLineDash([width * 4, width * 2]);
-      break;
-    case 'dotted':
-      ctx.setLineDash([width, width * 2]);
-      break;
-    case 'centerline':
-      ctx.setLineDash([width * 8, width * 2, width * 2, width * 2]);
-      break;
-    default:
-      ctx.setLineDash([]);
-  }
-}
-
-/** Half-angle of the arrowhead — atan(0.5) so the base width equals the axial
- *  depth (a 1:1 width-to-length triangle). */
-const ARROW_SPREAD = Math.atan(0.5);
-
-/** Barb length (tip → barb end, along the hypotenuse) for a head of `size`. */
-const ARROW_LEN = 6;
-
-/** Axial depth (tip → base) of an arrowhead of the given `size`. The body line
- *  is shortened by this amount so the thick stroke doesn't poke through and
- *  blunt the sharp triangular tip. */
-function arrowDepth(size: number): number {
-  return size * ARROW_LEN * Math.cos(ARROW_SPREAD);
-}
-
-/** How far to pull the body line back from the true tip for a given head.
- *  Filled → to the triangle base. Open (V) has no base, so only tuck the butt
- *  cap behind the tip (half the stroke width) so the line still meets the V
- *  without the squared end poking past it. */
-function arrowBodyInset(head: ArrowHead, size: number, strokeW: number): number {
-  if (head === 'none') return 0;
-  return head === 'filled' ? arrowDepth(size) : strokeW * 0.6;
-}
-
-/** Move `p` toward `toward` by `dist` (clamped so it never overshoots). */
-function shortenToward(p: Point, toward: Point, dist: number): Point {
-  const dx = toward.x - p.x;
-  const dy = toward.y - p.y;
-  const L = Math.hypot(dx, dy) || 1;
-  const d = Math.min(dist, L * 0.9);
-  return { x: p.x + (dx / L) * d, y: p.y + (dy / L) * d };
+  ctx.setLineDash(dashPattern(style, width));
 }
 
 function drawArrow(
@@ -559,13 +520,11 @@ function drawArrow(
   size: number,
 ): void {
   if (head === 'none') return;
-  const angle = Math.atan2(from.y - to.y, from.x - to.x);
-  const len = size * ARROW_LEN;
-  const spread = ARROW_SPREAD;
-  const bx1 = from.x - len * Math.cos(angle - spread);
-  const by1 = from.y - len * Math.sin(angle - spread);
-  const bx2 = from.x - len * Math.cos(angle + spread);
-  const by2 = from.y - len * Math.sin(angle + spread);
+  const [b1, b2] = arrowBarbs(from, to, size);
+  const bx1 = b1.x;
+  const by1 = b1.y;
+  const bx2 = b2.x;
+  const by2 = b2.y;
 
   ctx.save();
   ctx.setLineDash([]);
@@ -763,7 +722,7 @@ export function drawCloudPath(
   pageHeight: number,
 ): void {
   if (points.length < 3) return;
-  const ARC_R = 8 * scale; // arc radius in screen px
+  const ARC_R = CLOUD_ARC_R * scale; // arc radius in screen px
   ctx.beginPath();
   for (let i = 0; i < points.length; i++) {
     const a = points[i]!;

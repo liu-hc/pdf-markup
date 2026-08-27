@@ -10,6 +10,11 @@ import {
 } from '../state/store';
 import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot } from '../state/types';
 import { applyPageOrder } from '../markups/order';
+// Static, deliberately: a property edit must land in the same tick as the
+// click. Behind a dynamic import it didn't, and any re-render in the gap
+// (a cursor move is enough) rebuilt the panel from pre-edit state — which is
+// what made the polygon "Show area" tick box flick itself back off.
+import { applyMarkupChange, clearHistory } from '../state/undo';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
@@ -295,7 +300,6 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           const next = doc.markups.map((m) =>
             !pageOnly || m.pageIndex === doc.currentPage ? { ...m, locked: locking } : m,
           );
-          const { applyMarkupChange } = await import('../state/undo');
           applyMarkupChange(locking ? 'Lock markups' : 'Unlock markups', next);
           // Locked markups can't stay selected
           if (locking) setState({ selectedMarkupIds: [] });
@@ -315,7 +319,7 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           const { flattenPage } = await import('../pdf/loader');
           await flattenPage(doc.id, doc.currentPage);
           setState({ selectedMarkupIds: [] });
-          (await import('../state/undo')).clearHistory();
+          clearHistory();
           ws.redrawAllMarkups();
           break;
         }
@@ -331,7 +335,7 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           if (!ok) break;
           await flattenDocument(doc.id);
           setState({ selectedMarkupIds: [] });
-          (await import('../state/undo')).clearHistory();
+          clearHistory();
           ws.redrawAllMarkups();
           break;
         }
@@ -567,7 +571,7 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>Shapes</h4>
       ${fig(guideShapes, 'Shape tools: rectangle, ellipse, polygon, revision cloud, line, polyline, highlighter')}
       <ul>
-        <li><strong>Rectangle (R) / Ellipse (O)</strong> — two clicks place opposite corners, with live preview. Both support infill, rotation, and line weight/style.</li>
+        <li><strong>Rectangle (R) / Ellipse (O)</strong> — two clicks place opposite corners, with live preview. Both support infill, rotation, and line weight/style. Hold <strong>Ctrl</strong> (<strong>&#8984;</strong> on a Mac) while placing an ellipse for a perfect circle, or while drawing a line to finish it with an arrowhead.</li>
         <li><strong>Polygon (Shift+P)</strong> — click each vertex; double-click or click the start point to close. Toggle a centered <strong>area label</strong> in the inspector.</li>
         <li><strong>Revision cloud</strong> — hold Shift when closing a polygon to turn its edges into arc scallops.</li>
         <li><strong>Line (L) / Polyline (P)</strong> — Shift locks segments orthogonal. Start/end arrowheads are 1:1 triangles adjustable from 25% to 800% of line weight.</li>
@@ -592,7 +596,7 @@ function showHelpDialog(): void {
         <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
         <li><strong>Override dimension</strong> — tick it in a selected dimension's properties to type the value yourself instead of measuring it off the page scale. The box opens seeded with what the scale currently reads; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a detail the drawing isn't to scale for). Clear the value for a dimension line with no text; untick the box to hand it back to the scale.</li>
         <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
-        <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, Calibrate and both Dimension tools pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), then a segment <em>midpoint</em> (triangle), then the nearest point <em>along</em> a line or curve (circle). The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. The third (offset) click never snaps.</li>
+        <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, the measure tools <em>and every shape tool</em> (rectangle, ellipse, polygon, line, polyline) pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), then a segment <em>midpoint</em> (triangle), then the nearest point <em>along</em> a line or curve (circle). The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. Hold <strong>Shift</strong> to ignore snapping and take the ortho lock instead; a dimension's third (offset) click never snaps.</li>
         <li>Per-page <strong>Totals</strong> (linear, polyline, area) accumulate in the inspector.</li>
       </ul>
     </div>
@@ -628,6 +632,7 @@ function showHelpDialog(): void {
     </div>
 
     <div class="help-section"><h4>Keyboard shortcuts</h4>
+      <p class="help-note">Shortcuts are written for Windows; on a Mac use <strong>&#8984;</strong> wherever <code>Ctrl</code> appears. Modifier keys that change a drawing (perfect circle, arrowhead) accept either key, because macOS reserves Ctrl+click for the secondary click.</p>
       <table class="help-keys">
         <tr><td><code>F</code> <code>H</code> <code>Z</code></td><td>Flip / Pan / Zoom Page</td></tr>
         <tr><td><code>R</code> <code>O</code> <code>Shift+P</code> <code>L</code> <code>P</code></td><td>Rectangle / Ellipse / Polygon / Line / Polyline</td></tr>
@@ -1916,9 +1921,7 @@ function toggleMarkupLock(id: string): void {
   if (!doc || !m) return;
   const locking = !m.locked;
   const next = doc.markups.map((mk) => (mk.id === id ? { ...mk, locked: locking } : mk));
-  import('../state/undo').then(({ applyMarkupChange }) =>
-    applyMarkupChange(locking ? 'Lock markup' : 'Unlock markup', next),
-  );
+  applyMarkupChange(locking ? 'Lock markup' : 'Unlock markup', next);
   if (locking && getState().selectedMarkupIds.includes(id)) {
     setState({ selectedMarkupIds: getState().selectedMarkupIds.filter((s) => s !== id) });
   }
@@ -2015,7 +2018,7 @@ function applyDrawOrder(visualFrontToBack: string[]): void {
   if (!doc) return;
   const backToFront = [...visualFrontToBack].reverse();
   const next = applyPageOrder(doc.markups, doc.currentPage, backToFront);
-  import('../state/undo').then(({ applyMarkupChange }) => applyMarkupChange('Reorder', next));
+  applyMarkupChange('Reorder', next);
 }
 
 /** Escape a value for an HTML attribute in the property-panel templates. */
@@ -2138,9 +2141,15 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     .map((s) => `<option value="${s}" ${s === lineStyle ? 'selected' : ''}>${s}</option>`)
     .join('');
 
+  // The linework opacity slider. On a shape that can carry an infill it sits
+  // directly under Fill opacity so the two read as a pair; on everything else
+  // it follows the line properties.
+  const lineOpacityRow = `
+    <label class="opacity-row">Line opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>`;
+
   // Infill control (rectangle/ellipse/polygon/text/callout/area). The infill
   // carries its OWN opacity and an optional Multiply blend, both independent
-  // of the linework opacity below.
+  // of the linework opacity.
   let fillSection = '';
   if (FILL_BEARING_TYPES.includes(m.type)) {
     const fillResolved = m.overrides?.fillColor !== undefined ? m.overrides.fillColor : (defaults?.fillColor ?? null);
@@ -2150,7 +2159,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     const multiply = m.overrides?.fillMultiply ?? false;
     fillSection = `
     <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
-    <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>
+    <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>${lineOpacityRow}
     <label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${multiply ? 'checked' : ''} title="Blend the infill with the drawing beneath instead of covering it"></label>`;
   }
   const weightOptions =
@@ -2267,7 +2276,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label>Weight <select data-prop="lineWeight">${weightOptions}</select></label>
     <label>Style <select data-prop="lineStyle">${styleOptions}</select></label>
     ${rotationSection}
-    <label class="opacity-row">Line opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>
+    ${fillSection ? '' : lineOpacityRow}
     ${arrowSection}
     ${textSection}
     ${measureToggle}
@@ -2323,9 +2332,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         const value = numeric.includes(prop) ? Number(rawValue) : rawValue;
         return { ...mk, overrides: { ...mk.overrides, [prop]: value } };
       });
-      import('../state/undo').then(({ applyMarkupChange }) =>
-        applyMarkupChange('Edit properties', next),
-      );
+      applyMarkupChange('Edit properties', next);
     });
   });
 
@@ -2358,9 +2365,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     const next = doc.markups.map((mk) =>
       mk.id === selectedId ? { ...mk, customLabel: seed } : mk,
     );
-    import('../state/undo').then(({ applyMarkupChange }) =>
-      applyMarkupChange(on ? 'Override dimension' : 'Clear dimension override', next),
-    );
+    applyMarkupChange(on ? 'Override dimension' : 'Clear dimension override', next);
   });
 
   // Boolean checkboxes that live in `overrides` (Multiply infill, box Border)
@@ -2372,9 +2377,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       const next = doc.markups.map((mk) =>
         mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [flag]: cb.checked } } : mk,
       );
-      import('../state/undo').then(({ applyMarkupChange }) =>
-        applyMarkupChange('Edit properties', next),
-      );
+      applyMarkupChange('Edit properties', next);
     });
   });
 
@@ -2385,7 +2388,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     const next = doc.markups.map((mk) =>
       mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, fillColor: value } } : mk,
     );
-    import('../state/undo').then(({ applyMarkupChange }) => applyMarkupChange('Edit fill', next));
+    applyMarkupChange('Edit fill', next);
   };
 
   // Line / Infill / Text color wells open the standard swatch palette popup
@@ -2412,9 +2415,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
           const next = fresh.markups.map((mk) =>
             mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [prop]: color } } : mk,
           );
-          import('../state/undo').then(({ applyMarkupChange }) =>
-            applyMarkupChange('Edit properties', next),
-          );
+          applyMarkupChange('Edit properties', next);
         }
         btn.style.background = color;
       });
@@ -2445,9 +2446,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       const next = doc.markups.map((mk) =>
         mk.id === selectedId ? ({ ...mk, [flag]: cb.checked } as typeof mk) : mk,
       );
-      import('../state/undo').then(({ applyMarkupChange }) =>
-        applyMarkupChange('Edit properties', next),
-      );
+      applyMarkupChange('Edit properties', next);
     });
   });
 
@@ -2456,7 +2455,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     const doc = getActiveDoc();
     if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
     const next = doc.markups.map((mk) => (mk.id === selectedId ? { ...mk, ...patch } : mk));
-    import('../state/undo').then(({ applyMarkupChange }) => applyMarkupChange('Edit arrow', next));
+    applyMarkupChange('Edit arrow', next);
   };
   const arrowStyleSel = props.querySelector<HTMLSelectElement>('[data-arrow-style]');
   const currentStyle = (): ArrowHead => (arrowStyleSel?.value as ArrowHead) || 'filled';
@@ -2540,7 +2539,8 @@ function snapStatus(doc: ReturnType<typeof getActiveDoc>, tool: string): string 
   return 'Snap: —';
 }
 
-const SNAP_TOOLS = ['dimension', 'calibrate'];
+/** Keep in sync with usesVectorSnap() in tools/controller.ts. */
+const SNAP_TOOLS = ['dimension', 'calibrate', 'rectangle', 'ellipse', 'polygon', 'line', 'polyline'];
 
 function renderStatusBar(root: HTMLElement): void {
   const doc = getActiveDoc();

@@ -87,9 +87,30 @@ interface DimDraw {
 /** How close (screen px) the cursor must be for a vector snap to take. */
 const SNAP_RADIUS_PX = 12;
 
-/** Tools that snap to the PDF's own vector geometry. */
+/** Tools that snap to the PDF's own vector geometry. Every tool that places
+ *  a point on the drawing: the measure tools and all the shape tools. The
+ *  highlighter is deliberately out — it's a free-hand swipe, not a placement. */
 function usesVectorSnap(tool: ToolId): boolean {
-  return tool === 'dimension' || tool === 'calibrate';
+  return (
+    tool === 'dimension' ||
+    tool === 'calibrate' ||
+    tool === 'rectangle' ||
+    tool === 'ellipse' ||
+    tool === 'polygon' ||
+    tool === 'line' ||
+    tool === 'polyline'
+  );
+}
+
+/** Vector-snap a live point for a drawing tool. Holding Shift means the user
+ *  is asking for an ortho lock, so it wins over snapping rather than fighting
+ *  it — and clears any pending snap so no misleading marker is left behind. */
+function snapDrawPoint(pv: PageView, p: Point, tool: ToolId, shift: boolean): Point {
+  if (shift || !usesVectorSnap(tool)) {
+    activeSnap = null;
+    return p;
+  }
+  return snapToVectors(pv, p);
 }
 
 /** The snap the last pointer move resolved, so a click lands on exactly the
@@ -234,7 +255,9 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
   const pv = ws.getPageViewAt(e.clientX, e.clientY);
   if (!pv) return;
   const tool = getState().activeTool;
-  const p = pv.screenToPage(e.clientX, e.clientY);
+  const rawDown = pv.screenToPage(e.clientX, e.clientY);
+  // Drawing tools start on the drawing's own geometry when one is in range
+  const p = usesVectorSnap(tool) && !e.shiftKey ? snappedClickPoint(pv, rawDown) : rawDown;
 
   // Middle-button drag pans on EVERY tool. Left-button pans with the Pan tool,
   // or Alt+Left on the Navigate tools (flip/zoom) where it has no other meaning.
@@ -514,34 +537,39 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  // Before the first click these tools have no preview to hang the marker on,
-  // so draw the indicator on its own.
+  // A shape in progress: snap the live point, preview, then lay the snap
+  // marker on top (drawPreview/previewRect both clear the SVG layer first).
+  if (draw.pv && draw.start) {
+    const p = snapDrawPoint(draw.pv, draw.pv.screenToPage(e.clientX, e.clientY), tool, e.shiftKey);
+
+    if (isPolyTool(tool)) {
+      // Rubber-band line from the committed vertices to the current cursor.
+      // Shift locks polyline segments to horizontal/vertical. Polygon / area
+      // show a closed preview when the cursor is over the start vertex,
+      // signalling that a click there will self-close the shape.
+      const pt = snapPolyPoint(tool, p, e.shiftKey);
+      if (isCloseHover(tool, pt)) {
+        draw.pv.drawPreview(draw.points, true, previewColor(draw.pv.pageIndex));
+      } else {
+        draw.pv.drawPreview([...draw.points, pt], false, previewColor(draw.pv.pageIndex));
+      }
+      paintSnapMarker(draw.pv);
+      return;
+    }
+
+    // Two-click (rectangle/ellipse/text) and drag tools both preview from start
+    previewRect(draw.pv, draw.start, p, tool, e.shiftKey);
+    paintSnapMarker(draw.pv);
+    return;
+  }
+
+  // Nothing in progress — show where a click would land, so the snap is
+  // visible before the first point is committed.
   if (pv && usesVectorSnap(tool) && !dimDraw && !calibDraw) {
-    snapToVectors(pv, pv.screenToPage(e.clientX, e.clientY));
+    snapDrawPoint(pv, pv.screenToPage(e.clientX, e.clientY), tool, e.shiftKey);
     pv.clearSvg();
     paintSnapMarker(pv);
-    return;
   }
-
-  if (!draw.pv || !draw.start) return;
-  const p = draw.pv.screenToPage(e.clientX, e.clientY);
-
-  if (isPolyTool(tool)) {
-    // Rubber-band line from the committed vertices to the current cursor.
-    // Shift locks polyline segments to horizontal/vertical. Polygon / area
-    // show a closed preview when the cursor is over the start vertex,
-    // signalling that a click there will self-close the shape.
-    const pt = snapPolyPoint(tool, p, e.shiftKey);
-    if (isCloseHover(tool, pt)) {
-      draw.pv.drawPreview(draw.points, true, previewColor(draw.pv.pageIndex));
-    } else {
-      draw.pv.drawPreview([...draw.points, pt], false, previewColor(draw.pv.pageIndex));
-    }
-    return;
-  }
-
-  // Two-click (rectangle/ellipse/text) and drag tools both preview from start
-  previewRect(draw.pv, draw.start, p, tool, e.shiftKey);
 }
 
 /** True when the cursor is over the start vertex of a closeable polygon/area
@@ -675,7 +703,10 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   }
 
   if (!draw.pv || !draw.start) return;
-  const p = draw.pv.screenToPage(e.clientX, e.clientY);
+  const p =
+    usesVectorSnap(tool) && !e.shiftKey
+      ? snappedClickPoint(draw.pv, draw.pv.screenToPage(e.clientX, e.clientY))
+      : draw.pv.screenToPage(e.clientX, e.clientY);
 
   // Two-click tools (rectangle / ellipse / text): place opposite corners
   if (isTwoClickTool(tool)) {
@@ -1092,7 +1123,9 @@ function commitDragTool(tool: ToolId, a: Point, b: Point, e: PointerEvent, ws: W
         y1: a.y,
         x2: end.x,
         y2: end.y,
-        arrowEnd: e.ctrlKey ? 'filled' : 'none',
+        // Ctrl (Windows) / Cmd (Mac): macOS reserves Ctrl+click for the
+        // secondary click, so a Ctrl-only modifier never reaches us there.
+        arrowEnd: e.ctrlKey || e.metaKey ? 'filled' : 'none',
         arrowStart: 'none',
       };
       break;
@@ -1163,9 +1196,11 @@ function commitTwoClick(tool: ToolId, a: Point, b: Point, e: PointerEvent, pageI
     let ry = Math.abs(b.y - a.y) / 2;
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2;
-    if (e.ctrlKey) {
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl (Windows) / Cmd (Mac) constrains to a perfect circle — Ctrl alone
+      // is unusable on macOS, where Ctrl+click is the secondary click.
       const r = Math.max(rx, ry);
-      rx = ry = r; // Ctrl = perfect circle
+      rx = ry = r;
     }
     if (rx < 0.5 || ry < 0.5) return;
     markup = { id: uid(), type: 'ellipse', pageIndex, cx, cy, rx, ry };

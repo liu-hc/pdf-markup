@@ -1,5 +1,158 @@
-import type { Point } from '../state/types';
+import type { ArrowHead, LineStyle, Point } from '../state/types';
 import { FULL_SCALE_LABEL } from '../state/types';
+
+/* ── Shared markup geometry ───────────────────────────────────────────────
+   Pure maths, no canvas and no pdf-lib, so the on-screen renderer
+   (markups/draw.ts) and the PDF exporter (pdf/export.ts) draw the SAME
+   shapes. Anything both need lives here; if it only one of them needs it,
+   it stays in that module. */
+
+/** Arrowhead half-angle — atan(0.5), so the base width equals the axial
+ *  depth (a 1:1 width-to-length triangle). */
+export const ARROW_SPREAD = Math.atan(0.5);
+
+/** Barb length (tip → barb end, along the hypotenuse) per unit of arrow size. */
+export const ARROW_LEN = 6;
+
+/** Axial depth (tip → base) of an arrowhead of the given size. */
+export function arrowDepth(size: number): number {
+  return size * ARROW_LEN * Math.cos(ARROW_SPREAD);
+}
+
+/** How far to pull a body line back from the true tip. Filled → to the
+ *  triangle base. Open (V) has no base, so only tuck the butt cap behind the
+ *  tip so the squared end doesn't poke past the V. */
+export function arrowBodyInset(head: ArrowHead, size: number, strokeW: number): number {
+  if (head === 'none') return 0;
+  return head === 'filled' ? arrowDepth(size) : strokeW * 0.6;
+}
+
+/** Move `p` toward `toward` by `dist` (clamped so it never overshoots). */
+export function shortenToward(p: Point, toward: Point, dist: number): Point {
+  const dx = toward.x - p.x;
+  const dy = toward.y - p.y;
+  const L = Math.hypot(dx, dy) || 1;
+  const d = Math.min(dist, L * 0.9);
+  return { x: p.x + (dx / L) * d, y: p.y + (dy / L) * d };
+}
+
+/** The two barb endpoints of an arrowhead whose tip is at `tip`, pointing away
+ *  from `awayFrom`. Space-agnostic: feed it screen coords or page coords and
+ *  the triangle comes back in the same space. */
+export function arrowBarbs(tip: Point, awayFrom: Point, size: number): [Point, Point] {
+  const angle = Math.atan2(tip.y - awayFrom.y, tip.x - awayFrom.x);
+  const len = size * ARROW_LEN;
+  return [
+    { x: tip.x - len * Math.cos(angle - ARROW_SPREAD), y: tip.y - len * Math.sin(angle - ARROW_SPREAD) },
+    { x: tip.x - len * Math.cos(angle + ARROW_SPREAD), y: tip.y - len * Math.sin(angle + ARROW_SPREAD) },
+  ];
+}
+
+/** Dash pattern for a line style at a given stroke width, or [] for solid.
+ *  Both renderers take their dashes from here. */
+export function dashPattern(style: LineStyle, width: number): number[] {
+  switch (style) {
+    case 'dashed':
+      return [width * 4, width * 2];
+    case 'dotted':
+      return [width, width * 2];
+    case 'centerline':
+      return [width * 8, width * 2, width * 2, width * 2];
+    default:
+      return [];
+  }
+}
+
+/** Revision-cloud scallop radius, in page points. */
+export const CLOUD_ARC_R = 8;
+
+/** The scalloped outline of a revision cloud, flattened to a point list in
+ *  PAGE coordinates (y-up).
+ *
+ *  The canvas renderer draws these with ctx.arc in its own y-down space; this
+ *  mirrors that maths in y-down and flips back at the end, so the exported
+ *  cloud scallops bulge exactly the way the on-screen one does. */
+export function cloudOutline(points: Point[], r = CLOUD_ARC_R, stepsPerArc = 10): Point[] {
+  if (points.length < 3) return [];
+  const out: Point[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
+    // y-down mirror of the page coords, matching the canvas maths
+    const ax = a.x;
+    const ay = -a.y;
+    const bx = b.x;
+    const by = -b.y;
+    const segLen = Math.hypot(bx - ax, by - ay);
+    if (segLen < 1) continue;
+    const numArcs = Math.max(1, Math.round(segLen / (r * 2)));
+    const angle = Math.atan2(by - ay, bx - ax);
+    for (let j = 0; j < numArcs; j++) {
+      const t = (j + 0.5) / numArcs;
+      const cx = ax + (bx - ax) * t;
+      const cy = ay + (by - ay) * t;
+      // ctx.arc(cx, cy, r, angle + PI, angle, false) sweeps in +theta,
+      // i.e. angle+PI through angle+2PI
+      for (let s = 0; s <= stepsPerArc; s++) {
+        const th = angle + Math.PI + (Math.PI * s) / stepsPerArc;
+        out.push({ x: cx + r * Math.cos(th), y: -(cy + r * Math.sin(th)) });
+      }
+    }
+  }
+  return out;
+}
+
+/** Cubic-bezier approximation of an ellipse, optionally rotated (degrees,
+ *  screen-clockwise like the markup's own `rotation`). Returns the start point
+ *  plus four [c1, c2, end] curve triples, in page coordinates. */
+export function ellipseBezier(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  rotationDeg = 0,
+): { start: Point; curves: [Point, Point, Point][] } {
+  const K = 0.5522847498307936;
+  // Stored rotation is screen-clockwise; page space is y-up, so it negates
+  const t = (-rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  const at = (x: number, y: number): Point => ({
+    x: cx + x * cos - y * sin,
+    y: cy + x * sin + y * cos,
+  });
+  return {
+    start: at(rx, 0),
+    curves: [
+      [at(rx, K * ry), at(K * rx, ry), at(0, ry)],
+      [at(-K * rx, ry), at(-rx, K * ry), at(-rx, 0)],
+      [at(-rx, -K * ry), at(-K * rx, -ry), at(0, -ry)],
+      [at(K * rx, -ry), at(rx, -K * ry), at(rx, 0)],
+    ],
+  };
+}
+
+/** The four corners of a rectangle rotated about its centre (page coords).
+ *  `rotationDeg` is the markup's screen-clockwise rotation. */
+export function rotatedRectCorners(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rotationDeg = 0,
+): Point[] {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const t = (-rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(t);
+  const sin = Math.sin(t);
+  return [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([dx, dy]) => ({ x: cx + dx! * cos - dy! * sin, y: cy + dx! * sin + dy! * cos }));
+}
 
 export function dist(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
