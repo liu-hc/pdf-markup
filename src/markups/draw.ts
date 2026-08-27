@@ -23,7 +23,14 @@ export interface DrawStyle {
   textColor: string;
   lineWeight: number;
   lineStyle: LineStyle;
+  /** Linework + text alpha. */
   opacity: number;
+  /** Infill alpha — independent of the linework alpha. */
+  fillOpacity: number;
+  /** Composite the infill with Multiply instead of painting over. */
+  fillMultiply: boolean;
+  /** Text / callout: paint the box border. */
+  border: boolean;
   fontSize: number;
   fontFamily: string;
   lineSpacing: number;
@@ -46,6 +53,11 @@ export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle 
     lineWeight: markup.overrides?.lineWeight ?? defaults.lineWeight,
     lineStyle: markup.overrides?.lineStyle ?? defaults.lineStyle,
     opacity: markup.overrides?.opacity ?? 1,
+    // Falls back to the line opacity so markups made before the two were
+    // split keep the single-alpha look they were drawn with.
+    fillOpacity: markup.overrides?.fillOpacity ?? markup.overrides?.opacity ?? 1,
+    fillMultiply: markup.overrides?.fillMultiply ?? false,
+    border: markup.overrides?.border ?? true,
     fontSize: markup.overrides?.fontSize ?? defaults.fontSize ?? 12,
     fontFamily: markup.overrides?.fontFamily ?? defaults.fontFamily ?? 'Arial',
     lineSpacing: markup.overrides?.lineSpacing ?? 1.35,
@@ -62,14 +74,38 @@ function canvasFont(sizePx: number, family: string, bold = false): string {
   return `${bold ? '700 ' : ''}${sizePx}px "${family}", sans-serif`;
 }
 
+/** Markup types that paint an enclosed infill (the only ones the multiply
+ *  pass has anything to draw for). */
+const FILL_SHAPES = new Set(['rectangle', 'ellipse', 'polygon', 'cloud', 'text', 'callout']);
+
+/** Which pass of the two-canvas markup render this call is painting.
+ *  `multiply` fills go on a separate `mix-blend-mode: multiply` canvas so they
+ *  darken the PDF beneath them; that pass draws NOTHING else. */
+export type DrawPhase = 'normal' | 'multiply';
+
+/** True when this markup contributes anything to the multiply pass. */
+export function hasMultiplyFill(markup: Markup, defaults: PageDefaults): boolean {
+  if (!(markup.overrides?.fillMultiply ?? false)) return false;
+  if (!FILL_SHAPES.has(markup.type)) return false;
+  const style = resolveStyle(markup, defaults);
+  return !!style.fill || markup.type === 'callout';
+}
+
 export function drawMarkupOnCanvas(
   ctx: CanvasRenderingContext2D,
   markup: Markup,
   defaults: PageDefaults,
   scale: number,
   pageHeight: number,
+  phase: DrawPhase = 'normal',
 ): void {
   const style = resolveStyle(markup, defaults);
+  // The multiply pass paints only infills; the normal pass paints everything
+  // except an infill that has been handed to the multiply pass.
+  const multiplyPass = phase === 'multiply';
+  if (multiplyPass && (!style.fillMultiply || !FILL_SHAPES.has(markup.type))) return;
+  /** Should THIS pass paint the shape's infill? */
+  const fillPass = style.fillMultiply === multiplyPass;
   ctx.save();
   ctx.globalAlpha = style.opacity;
   // Box (rectangular) line finish — never rounded caps/joins
@@ -79,6 +115,16 @@ export function drawMarkupOnCanvas(
   ctx.strokeStyle = style.stroke;
   ctx.fillStyle = style.fill ?? 'transparent';
   ctx.lineWidth = style.lineWeight * scale;
+
+  /** Paint an infill at the fill alpha, then restore the linework alpha.
+   *  A no-op when the infill belongs to the other pass. */
+  const paintFill = (fn: () => void): void => {
+    if (!fillPass) return;
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = style.fillOpacity;
+    fn();
+    ctx.globalAlpha = prev;
+  };
 
   const toScreen = (p: Point) => ({
     x: p.x * scale,
@@ -94,8 +140,8 @@ export function drawMarkupOnCanvas(
       // Rotate about the rectangle's center
       ctx.translate((markup.x + markup.width / 2) * scale, (pageHeight - markup.y - markup.height / 2) * scale);
       if (rot) ctx.rotate(rot);
-      if (style.fill) ctx.fillRect(-w / 2, -h / 2, w, h);
-      ctx.strokeRect(-w / 2, -h / 2, w, h);
+      if (style.fill) paintFill(() => ctx.fillRect(-w / 2, -h / 2, w, h));
+      if (!multiplyPass) ctx.strokeRect(-w / 2, -h / 2, w, h);
       ctx.restore();
       break;
     }
@@ -143,8 +189,8 @@ export function drawMarkupOnCanvas(
         0,
         Math.PI * 2,
       );
-      ctx.stroke();
-      if (style.fill) ctx.fill();
+      if (!multiplyPass) ctx.stroke();
+      if (style.fill) paintFill(() => ctx.fill());
       break;
     }
     case 'line': {
@@ -227,7 +273,11 @@ export function drawMarkupOnCanvas(
         drawArrow(ctx, d2s, d1s, 'filled', style.lineWeight * scale);
       }
       const len = dist({ x: markup.x1, y: markup.y1 }, { x: markup.x2, y: markup.y2 });
-      const label = formatLength(len, defaults.scaleFactor, markup.roundTo);
+      // A custom dimension carries its own typed text and ignores the scale
+      const label =
+        markup.customLabel !== undefined && markup.customLabel !== ''
+          ? markup.customLabel
+          : formatLength(len, defaults.scaleFactor, markup.roundTo);
       const loff = 11 * scale;
       // Label sits on the side of the dim line away from the measured points
       // (or the visually-upper side when offset = 0)
@@ -258,17 +308,19 @@ export function drawMarkupOnCanvas(
     }
     case 'cloud': {
       if (markup.points.length < 3) break;
-      drawCloudPath(ctx, markup.points, scale, pageHeight);
+      if (!multiplyPass) drawCloudPath(ctx, markup.points, scale, pageHeight);
       if (style.fill) {
-        ctx.beginPath();
-        const cf = toScreen(markup.points[0]!);
-        ctx.moveTo(cf.x, cf.y);
-        for (let i = 1; i < markup.points.length; i++) {
-          const cp = toScreen(markup.points[i]!);
-          ctx.lineTo(cp.x, cp.y);
-        }
-        ctx.closePath();
-        ctx.fill();
+        paintFill(() => {
+          ctx.beginPath();
+          const cf = toScreen(markup.points[0]!);
+          ctx.moveTo(cf.x, cf.y);
+          for (let i = 1; i < markup.points.length; i++) {
+            const cp = toScreen(markup.points[i]!);
+            ctx.lineTo(cp.x, cp.y);
+          }
+          ctx.closePath();
+          ctx.fill();
+        });
       }
       break;
     }
@@ -293,8 +345,9 @@ export function drawMarkupOnCanvas(
       }
       if (markup.type === 'polygon') {
         ctx.closePath();
-        if (style.fill) ctx.fill();
+        if (style.fill) paintFill(() => ctx.fill());
       }
+      if (multiplyPass) break;
       ctx.stroke();
       if (markup.type === 'polyline') {
         // Optional arrowheads at the open ends — tips at the true endpoints
@@ -323,11 +376,13 @@ export function drawMarkupOnCanvas(
       // Optional infill behind the text
       if (style.fill) {
         ctx.fillStyle = style.fill;
-        ctx.fillRect(x, y, markup.width * scale, markup.height * scale);
+        paintFill(() => ctx.fillRect(x, y, markup.width * scale, markup.height * scale));
       }
+      if (multiplyPass) break;
       // Box border — drawn with the line color/weight/style (independent of
-      // the text color, which only paints the glyphs)
-      ctx.strokeRect(x, y, markup.width * scale, markup.height * scale);
+      // the text color, which only paints the glyphs). Turned off by
+      // unchecking Border in the properties panel.
+      if (style.border) ctx.strokeRect(x, y, markup.width * scale, markup.height * scale);
       ctx.fillStyle = style.textColor;
       // Clip so text can never spill outside the box
       ctx.save();
@@ -346,6 +401,12 @@ export function drawMarkupOnCanvas(
       const bw = markup.textWidth * scale;
       const bh = markup.textHeight * scale;
       const anchor = toScreen({ x: markup.anchorX, y: markup.anchorY });
+      // Multiply pass: the box infill is all this markup contributes
+      if (multiplyPass) {
+        ctx.fillStyle = style.fill ?? 'rgba(255, 254, 245, 0.92)';
+        paintFill(() => ctx.fillRect(bx, by, bw, bh));
+        break;
+      }
       // Elbow leader: horizontal run out of the box at mid-height, kink,
       // then a diagonal to the anchor
       const leader = calloutLeader(
@@ -374,8 +435,8 @@ export function drawMarkupOnCanvas(
       drawArrow(ctx, anchor, kinkS, head, calloutArrow);
       // Box infill: user-chosen fill, else the cream default
       ctx.fillStyle = style.fill ?? 'rgba(255, 254, 245, 0.92)';
-      ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeRect(bx, by, bw, bh);
+      paintFill(() => ctx.fillRect(bx, by, bw, bh));
+      if (style.border) ctx.strokeRect(bx, by, bw, bh);
       ctx.fillStyle = style.textColor;
       // Clip so text can never spill outside the callout box
       ctx.save();

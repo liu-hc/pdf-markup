@@ -168,6 +168,12 @@ async function embedMarkup(
   const stroke = parseColor(markup.overrides?.strokeColor ?? defaults.strokeColor);
   const fill = markup.overrides?.fillColor ?? defaults.fillColor;
   const lineWeight = markup.overrides?.lineWeight ?? defaults.lineWeight;
+  // Linework and infill carry separate alphas; the infill falls back to the
+  // line alpha for markups made before the two were split.
+  const lineOpacity = markup.overrides?.opacity ?? 1;
+  const fillOpacity = markup.overrides?.fillOpacity ?? lineOpacity;
+  // Text / callout box outline, off when Border is unchecked
+  const border = markup.overrides?.border ?? true;
   const fontSize = markup.overrides?.fontSize ?? defaults.fontSize ?? 12;
   const fontFamily = markup.overrides?.fontFamily ?? defaults.fontFamily ?? 'Arial';
   const lineSpacing = markup.overrides?.lineSpacing ?? 1.35;
@@ -189,7 +195,8 @@ async function embedMarkup(
           : fill
             ? parseColor(fill)
             : undefined,
-        opacity: isHl ? 0.35 : 1,
+        opacity: isHl ? 0.35 : fillOpacity,
+        borderOpacity: isHl ? 0.35 : lineOpacity,
       });
       break;
     }
@@ -202,6 +209,8 @@ async function embedMarkup(
         borderColor: stroke,
         borderWidth: lineWeight,
         color: fill ? parseColor(fill) : undefined,
+        opacity: fillOpacity,
+        borderOpacity: lineOpacity,
       });
       break;
     }
@@ -212,6 +221,7 @@ async function embedMarkup(
         end: { x: markup.x2, y: markup.y2 },
         thickness: lineWeight,
         color: stroke,
+        opacity: lineOpacity,
       });
       break;
     }
@@ -239,9 +249,11 @@ async function embedMarkup(
         y: markup.y,
         width: markup.width,
         height: markup.height,
-        borderColor: stroke,
-        borderWidth: lineWeight,
+        borderColor: border ? stroke : undefined,
+        borderWidth: border ? lineWeight : 0,
         color: fill ? parseColor(fill) : undefined,
+        opacity: fillOpacity,
+        borderOpacity: lineOpacity,
       });
       const font = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
       drawFormattedText(
@@ -277,6 +289,7 @@ async function embedMarkup(
           end: markup.points[i]!,
           thickness: lineWeight,
           color: stroke,
+          opacity: lineOpacity,
         });
       }
       // Close polygon and cloud paths
@@ -286,6 +299,7 @@ async function embedMarkup(
           end: markup.points[0]!,
           thickness: lineWeight,
           color: stroke,
+          opacity: lineOpacity,
         });
       }
       break;
@@ -296,6 +310,7 @@ async function embedMarkup(
         end: { x: markup.anchorX, y: markup.anchorY },
         thickness: lineWeight,
         color: stroke,
+        opacity: lineOpacity,
       });
       // Text box (cream default fill, like the canvas) + wrapped text
       page.drawRectangle({
@@ -303,9 +318,11 @@ async function embedMarkup(
         y: markup.textY,
         width: markup.textWidth,
         height: markup.textHeight,
-        borderColor: stroke,
-        borderWidth: lineWeight,
+        borderColor: border ? stroke : undefined,
+        borderWidth: border ? lineWeight : 0,
         color: fill ? parseColor(fill) : rgb(1, 0.996, 0.96),
+        opacity: fillOpacity,
+        borderOpacity: lineOpacity,
       });
       const calloutFont = await getFont(pdf, fonts, fontFamily, markup.overrides?.bold ?? false);
       drawFormattedText(
@@ -332,12 +349,14 @@ async function embedMarkup(
         end: { x: markup.p1.x, y: markup.p1.y },
         thickness: lineWeight,
         color: stroke,
+        opacity: lineOpacity,
       });
       page.drawLine({
         start: { x: markup.vertex.x, y: markup.vertex.y },
         end: { x: markup.p2.x, y: markup.p2.y },
         thickness: lineWeight,
         color: stroke,
+        opacity: lineOpacity,
       });
       break;
     }

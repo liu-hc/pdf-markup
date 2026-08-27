@@ -159,6 +159,10 @@ export function markSaved(): void {
 }
 
 export function closeDocument(docId: string): void {
+  // Drop the page caches keyed on this document — the extracted vector-snap
+  // geometry in particular runs to megabytes per page on large CAD sheets.
+  void import('../pdf/vectorSnap').then(({ clearSnapIndex }) => clearSnapIndex(docId));
+  void import('../pdf/textLayer').then(({ clearTextBoxes }) => clearTextBoxes(docId));
   const docs = state.documents.filter((d) => d.id !== docId);
   let activeDocId = state.activeDocId;
   if (activeDocId === docId) {

@@ -18,11 +18,13 @@ import type {
   ToolId,
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
+import { formatLength } from '../util/units';
 import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
 import { measureTextBlockHeight } from '../markups/draw';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
 import { ensureTextBoxes, getTextBoxesSync, type TextBox } from '../pdf/textLayer';
+import { ensureSnapIndex, findSnap, getSnapIndexSync, type SnapKind } from '../pdf/vectorSnap';
 import type { Workspace } from '../view/Workspace';
 import type { PageView } from '../view/PageView';
 
@@ -81,6 +83,65 @@ interface DimDraw {
   pageIndex: number;
   p1: Point;
   p2: Point | null;
+  /** Custom Dimension: the label is typed, not measured off the scale. */
+  custom: boolean;
+}
+
+/** How close (screen px) the cursor must be for a vector snap to take. */
+const SNAP_RADIUS_PX = 12;
+
+/** Tools that snap to the PDF's own vector geometry. */
+function usesVectorSnap(tool: ToolId): boolean {
+  return tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate';
+}
+
+/** The snap the last pointer move resolved, so a click lands on exactly the
+ *  point the marker showed. Cleared whenever nothing is in range. */
+let activeSnap: { pv: PageView; page: Point; kind: SnapKind } | null = null;
+
+/** Kick off (or reuse) the vector index for a page. Extraction is lazy and
+ *  cached; until it lands, the tools just behave as they always did. */
+function primeSnap(pageIndex: number): void {
+  const doc = getActiveDoc();
+  if (!doc?.pdfDoc) return;
+  if (getSnapIndexSync(doc.id, pageIndex)) return;
+  void ensureSnapIndex(doc.id, doc.pdfDoc, pageIndex);
+}
+
+/** Resolve the cursor to the nearest piece of drawing geometry, or return the
+ *  raw point when nothing is close enough. Records the hit for the click that
+ *  follows and returns the point to use. */
+function snapToVectors(pv: PageView, p: Point): Point {
+  activeSnap = null;
+  const doc = getActiveDoc();
+  if (!doc?.pdfDoc) return p;
+  const index = getSnapIndexSync(doc.id, pv.pageIndex);
+  if (!index) {
+    primeSnap(pv.pageIndex);
+    return p;
+  }
+  const radius = SNAP_RADIUS_PX / pv.getScale();
+  const hit = findSnap(index, p, { radius, midpoints: true, edges: true });
+  if (!hit) return p;
+  activeSnap = { pv, page: hit.point, kind: hit.kind };
+  return hit.point;
+}
+
+/** Page point for a click on a snapping tool: the snap the hover resolved when
+ *  it still matches this cursor position, else a fresh snap of this point. */
+function snappedClickPoint(pv: PageView, p: Point): Point {
+  if (activeSnap && activeSnap.pv === pv) {
+    const px = SNAP_RADIUS_PX / pv.getScale();
+    if (Math.hypot(activeSnap.page.x - p.x, activeSnap.page.y - p.y) <= px * 1.5) {
+      return { ...activeSnap.page };
+    }
+  }
+  return snapToVectors(pv, p);
+}
+
+/** Paint the snap indicator on top of the preview that was just drawn. */
+function paintSnapMarker(pv: PageView): void {
+  if (activeSnap && activeSnap.pv === pv) pv.drawSnapMarker(activeSnap.page, activeSnap.kind);
 }
 
 /** Default callout box size in page points (grows as the user types/resizes). */
@@ -328,7 +389,7 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
 
   // Callout, Dimension and Calibrate are discrete multi-click tools — clicks
   // are registered on pointerup.
-  if (tool === 'callout' || tool === 'dimension' || tool === 'calibrate') {
+  if (tool === 'callout' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate') {
     e.preventDefault();
     return;
   }
@@ -434,17 +495,34 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  // Dimension: live preview (segment, then offset dimension line)
-  if (tool === 'dimension' && dimDraw) {
-    renderDimPreview(dimDraw.pv.screenToPage(e.clientX, e.clientY), e.shiftKey);
+  // Dimension / Custom Dimension: live preview (segment, then offset line),
+  // with the cursor snapped to the drawing's own vector geometry
+  if ((tool === 'dimension' || tool === 'customDimension') && dimDraw) {
+    const raw = dimDraw.pv.screenToPage(e.clientX, e.clientY);
+    // Only the two measured points snap; the third click just pulls the
+    // dimension line out to an offset and shouldn't grab drawing geometry.
+    const c = dimDraw.p2 ? raw : snapToVectors(dimDraw.pv, raw);
+    if (dimDraw.p2) activeSnap = null;
+    renderDimPreview(c, e.shiftKey);
+    paintSnapMarker(dimDraw.pv);
     return;
   }
 
   // Calibrate: rubber-band line from the first click to the cursor
   if (tool === 'calibrate' && calibDraw) {
-    const c = calibDraw.pv.screenToPage(e.clientX, e.clientY);
+    const c = snapToVectors(calibDraw.pv, calibDraw.pv.screenToPage(e.clientX, e.clientY));
     const end = e.shiftKey ? orthoSnap(calibDraw.p1, c) : c;
     calibDraw.pv.drawPreview([calibDraw.p1, end], false, previewColor(calibDraw.pv.pageIndex));
+    paintSnapMarker(calibDraw.pv);
+    return;
+  }
+
+  // Before the first click these tools have no preview to hang the marker on,
+  // so draw the indicator on its own.
+  if (pv && usesVectorSnap(tool) && !dimDraw && !calibDraw) {
+    snapToVectors(pv, pv.screenToPage(e.clientX, e.clientY));
+    pv.clearSvg();
+    paintSnapMarker(pv);
     return;
   }
 
@@ -560,16 +638,20 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   }
 
   // Dimension: discrete clicks (start → end → pull offset)
-  if (tool === 'dimension') {
+  if (tool === 'dimension' || tool === 'customDimension') {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? dimDraw?.pv ?? null;
-    if (pv) handleDimClick(pv, pv.screenToPage(e.clientX, e.clientY), e, ws);
+    if (!pv) return;
+    const raw = pv.screenToPage(e.clientX, e.clientY);
+    // Clicks 1 and 2 snap to drawing geometry; click 3 is a free offset pull
+    const pt = dimDraw?.p2 ? raw : snappedClickPoint(pv, raw);
+    handleDimClick(pv, pt, e, ws, tool === 'customDimension');
     return;
   }
 
   // Calibrate: two clicks define the measured span, then prompt for its length
   if (tool === 'calibrate') {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? calibDraw?.pv ?? null;
-    if (pv) handleCalibrateClick(pv, pv.screenToPage(e.clientX, e.clientY), e);
+    if (pv) handleCalibrateClick(pv, snappedClickPoint(pv, pv.screenToPage(e.clientX, e.clientY)), e);
     return;
   }
 
@@ -938,7 +1020,7 @@ function previewColor(pageIndex: number): string {
 
 function previewRect(pv: PageView, a: Point, b: Point, tool: ToolId, shift = false): void {
   // Shift constrains a line / dimension / calibration to horizontal or vertical
-  if (shift && (tool === 'line' || tool === 'dimension' || tool === 'calibrate')) b = orthoSnap(a, b);
+  if (shift && (tool === 'line' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate')) b = orthoSnap(a, b);
   pv.clearSvg();
   const ns = 'http://www.w3.org/2000/svg';
   const scale = pv.getScale();
@@ -949,7 +1031,7 @@ function previewRect(pv: PageView, a: Point, b: Point, tool: ToolId, shift = fal
   const h = Math.abs(b.y - a.y) * scale;
   const color = previewColor(pv.pageIndex);
 
-  if (tool === 'line' || tool === 'dimension' || tool === 'calibrate') {
+  if (tool === 'line' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate') {
     const line = document.createElementNS(ns, 'line');
     line.setAttribute('x1', String(a.x * scale));
     line.setAttribute('y1', String((ph - a.y) * scale));
@@ -1184,11 +1266,17 @@ function perpOffset(p1: Point, p2: Point, p: Point): number {
   return (p.x - midX) * nx + (p.y - midY) * ny;
 }
 
-function handleDimClick(pv: PageView, p: Point, e: PointerEvent, ws: Workspace): void {
+function handleDimClick(
+  pv: PageView,
+  p: Point,
+  e: PointerEvent,
+  ws: Workspace,
+  custom = false,
+): void {
   const color = previewColor(pv.pageIndex);
   if (!dimDraw) {
     // Click 1: first measured point
-    dimDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null };
+    dimDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null, custom };
     pv.drawPreview([dimDraw.p1, dimDraw.p1], false, color);
     return;
   }
@@ -1200,9 +1288,31 @@ function handleDimClick(pv: PageView, p: Point, e: PointerEvent, ws: Workspace):
   }
   // Click 3: pull the dimension line to a custom offset
   const { p1, p2, pageIndex } = dimDraw;
+  const wasCustom = dimDraw.custom;
   const offset = perpOffset(p1, p2, p);
   dimDraw = null;
+  activeSnap = null;
   pv.clearSvg();
+  // A Custom Dimension carries typed text instead of a measured value — ask
+  // for it now, seeded with whatever the page scale would have read.
+  let customLabel: string | undefined;
+  if (wasCustom) {
+    const measured = formatLength(
+      Math.hypot(p2.x - p1.x, p2.y - p1.y),
+      getActiveDoc()?.pageDefaults[pageIndex]?.scaleFactor ?? null,
+    );
+    const typed = prompt(
+      'Dimension text — shown exactly as typed, independent of the page scale\n(e.g. 12\'-6", VERIFY IN FIELD, EQ)',
+      measured,
+    );
+    if (typed === null) {
+      // Cancelled — drop the dimension rather than committing a measured one
+      returnToNavTool();
+      ws.redrawAllMarkups();
+      return;
+    }
+    customLabel = typed;
+  }
   const markup: Markup = {
     id: uid(),
     type: 'dimension',
@@ -1212,6 +1322,7 @@ function handleDimClick(pv: PageView, p: Point, e: PointerEvent, ws: Workspace):
     x2: p2.x,
     y2: p2.y,
     offset,
+    ...(customLabel !== undefined ? { customLabel } : {}),
   };
   applyMarkupChange('Add markup', [...docMarkups(), markup]);
   returnToNavTool();
@@ -1240,7 +1351,7 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
   const color = previewColor(pv.pageIndex);
   if (!calibDraw) {
     // Click 1: first endpoint
-    calibDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null };
+    calibDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null, custom: false };
     pv.drawPreview([calibDraw.p1, calibDraw.p1], false, color);
     return;
   }
@@ -1252,9 +1363,10 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
   const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
   if (len < 1) {
     // Too short to be meaningful — restart from this click
-    calibDraw = { pv, pageIndex, p1: { ...p }, p2: null };
+    calibDraw = { pv, pageIndex, p1: { ...p }, p2: null, custom: false };
     return;
   }
+  activeSnap = null;
   const real = prompt('Calibrate scale — enter the real-world length of the drawn line\n(e.g. 10\'-0", 10\', or 120 for inches)');
   calibDraw = null;
   pv.clearSvg();
@@ -2087,11 +2199,13 @@ export function setupKeyboardShortcuts(): void {
       if (dimDraw) {
         dimDraw.pv.clearSvg();
         dimDraw = null;
+        activeSnap = null;
         return;
       }
       if (calibDraw) {
         calibDraw.pv.clearSvg();
         calibDraw = null;
+        activeSnap = null;
         return;
       }
       if (draw.pv) {
@@ -2173,11 +2287,19 @@ export function setupKeyboardShortcuts(): void {
       q: 'callout',
       d: 'dimension',
     };
-    if (!mod && toolKeys[e.key.toLowerCase()]) {
+    // Bare letters pick a tool; Shift+letter is its own binding below, so the
+    // plain map must not also fire on the shifted key.
+    if (!mod && !e.shiftKey && toolKeys[e.key.toLowerCase()]) {
       import('../state/store').then(({ setActiveTool }) => setActiveTool(toolKeys[e.key.toLowerCase()]!));
     }
-    if (mod && e.shiftKey && e.key.toLowerCase() === 'p') {
-      import('../state/store').then(({ setActiveTool }) => setActiveTool('polygon'));
+    const shifted: Record<string, ToolId> = {
+      // Shift+P is what the ribbon has always advertised for Polygon
+      p: 'polygon',
+      // Shift+D: the typed-label sibling of the D (measured) dimension tool
+      d: 'customDimension',
+    };
+    if (e.shiftKey && shifted[e.key.toLowerCase()]) {
+      import('../state/store').then(({ setActiveTool }) => setActiveTool(shifted[e.key.toLowerCase()]!));
     }
   });
 }

@@ -11,11 +11,12 @@ import {
 import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ARCH_SCALES, ENG_SCALES, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
+import { ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
-import { parseArchScale, parseEngScale } from '../util/geometry';
+import { scaleFactorForLabel } from '../util/geometry';
+import { getSnapIndexSync, isSnapLoading } from '../pdf/vectorSnap';
 // User-guide illustrations (shared with the README)
 import guideWorkspace from '../../docs/graphics/workspace.png';
 import guideToolbar from '../../docs/graphics/toolbar.png';
@@ -48,6 +49,7 @@ const TOOL_ICONS: Record<string, string> = {
   calibrate: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="1.6" x2="9" y2="4.2"/><circle cx="9" cy="4.5" r="1"/><line x1="8.6" y1="5.3" x2="3.4" y2="15.6"/><line x1="9.4" y1="5.3" x2="14.6" y2="15.6"/><path d="M3.4 15.6l-.6 1.1M14.6 15.6l.6 1.1"/></svg>`,
   dimension: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="7" x2="15" y2="7"/><line x1="3" y1="5.5" x2="3" y2="16"/><line x1="15" y1="5.5" x2="15" y2="16"/><line x1="1" y1="9" x2="5" y2="5"/><line x1="13" y1="9" x2="17" y2="5"/></svg>`,
   measureAngle: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="14" x2="16" y2="14"/><line x1="3" y1="14" x2="13" y2="4"/><path d="M10 14 A7 7 0 0 0 7.95 9.05" fill="none"/><circle cx="3" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>`,
+  customDimension: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="11" x2="15" y2="11"/><line x1="3" y1="9.5" x2="3" y2="16"/><line x1="15" y1="9.5" x2="15" y2="16"/><line x1="1" y1="13" x2="5" y2="9"/><line x1="13" y1="13" x2="17" y2="9"/><text x="9" y="7" font-size="8" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">12</text></svg>`,
   snip: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="10" height="8" stroke-dasharray="2 1.6"/><circle cx="10.6" cy="15" r="1.5"/><circle cx="14.8" cy="12.6" r="1.5"/><line x1="11.7" y1="13.9" x2="14.5" y2="8.5"/><line x1="13.6" y1="11.7" x2="9" y2="8.5"/></svg>`,
   overlay: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="8" height="10" rx="1"/><rect x="7.5" y="5.5" width="8" height="10" rx="1" fill="currentColor" opacity="0.15"/><rect x="7.5" y="5.5" width="8" height="10" rx="1"/></svg>`,
 };
@@ -172,7 +174,65 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   return root;
 }
 
+/** Menubar open/close behaviour.
+ *
+ *  The dropdowns used to open on plain CSS `:hover`, which made them
+ *  unusable: a dropdown is ~4x wider than the menu title above it, so
+ *  reaching an item on its right-hand side takes the cursor across the NEXT
+ *  menu title (and the 2px seam below the title) — either of which flipped
+ *  the hover to another menu and the panel vanished mid-click.
+ *
+ *  So the open menu is explicit state instead. A title click opens it, moving
+ *  across the titles switches between them while one is open, and nothing
+ *  closes on hover-out: only an outside click, Escape, or picking a command
+ *  does. The dropdown and its title are one region, seam included. */
+function wireMenuBar(root: HTMLElement): void {
+  const nav = root.querySelector<HTMLElement>('.menu-nav');
+  if (!nav) return;
+  const items = Array.from(nav.querySelectorAll<HTMLElement>('.menu-item'));
+
+  const close = (): void => {
+    for (const it of items) it.classList.remove('open');
+  };
+  const open = (item: HTMLElement): void => {
+    close();
+    item.classList.add('open');
+  };
+
+  for (const item of items) {
+    // Clicking the title toggles its menu; the click must not reach the
+    // document-level close handler below.
+    item.addEventListener('pointerdown', (e) => {
+      if (e.target !== item && !(e.target as HTMLElement).classList.contains('menu-item')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (item.classList.contains('open')) close();
+      else open(item);
+    });
+    // With a menu already open, sliding along the menubar switches menus —
+    // the usual desktop menubar behaviour.
+    item.addEventListener('pointerenter', () => {
+      if (items.some((it) => it.classList.contains('open'))) open(item);
+    });
+  }
+
+  // Picking a command closes the menu (the action itself runs on click)
+  nav.querySelectorAll('.dropdown li[data-action]').forEach((li) => {
+    li.addEventListener('click', () => close());
+  });
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!nav.contains(e.target as Node)) close();
+  });
+  window.addEventListener('blur', close);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+}
+
 function wireMenus(root: HTMLElement, ws: Workspace): void {
+  wireMenuBar(root);
+
   root.querySelector('.btn-save')?.addEventListener('click', () => {
     const doc = getActiveDoc();
     if (doc) void saveDocumentInteractive(doc.id);
@@ -490,6 +550,7 @@ function showHelpDialog(): void {
       <ul>
         <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
         <li><strong>Callout (Q)</strong> — two clicks: arrow tip → text box, then type. The leader exits the box horizontally (default 25pt flat run) and bends at the elbow, which keeps its own drag handle for adjusting the distance.</li>
+        <li><strong>Custom Dimension (Shift+D)</strong> — placed exactly like a Dimension, but you type the label. The prompt is seeded with what the page scale measures; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a dimension the drawing isn't to scale for). Clear the <strong>Custom text</strong> box in the properties panel to hand it back to the scale.</li>
         <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
       </ul>
     </div>
@@ -497,9 +558,10 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>Measure</h4>
       ${fig(guideMeasure, 'Measurement tools: calibrate, dimension, angle')}
       <ul>
-        <li><strong>Calibrate</strong> — click two points across a known distance and type its real-world length; this sets the page <strong>scale</strong>. You can also pick a preset (architectural <code>1/4" = 1'-0"</code> … or engineering <code>1" = 100'</code>) in the ribbon.</li>
+        <li><strong>Calibrate</strong> — click two points across a known distance and type its real-world length; this sets the page <strong>scale</strong>. You can also pick a preset in the ribbon: <code>1:1 (Full size)</code> for reading the sheet at its own size, architectural <code>1/4" = 1'-0"</code> …, or engineering <code>1" = 100'</code>.</li>
         <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
         <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
+        <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, Calibrate and both Dimension tools pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), then a segment <em>midpoint</em> (triangle), then the nearest point <em>along</em> a line or curve (circle). The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. The third (offset) click never snaps.</li>
         <li>Per-page <strong>Totals</strong> (linear, polyline, area) accumulate in the inspector.</li>
       </ul>
     </div>
@@ -507,7 +569,9 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>Properties &amp; organizing</h4>
       ${fig(guideOrganize, 'Inspector: per-markup properties, markups list with drag reordering, editing shortcuts')}
       <ul>
-        <li>Selecting a markup opens its properties: <strong>Line / Infill / Text colors</strong> (each overriding the page defaults independently), weight, line style, opacity, rotation, arrows, fonts, and measurement options.</li>
+        <li>Selecting a markup opens its properties: <strong>Line / Infill / Text colors</strong> (each overriding the page defaults independently), weight, line style, rotation, arrows, fonts, and measurement options.</li>
+        <li><strong>Line opacity and Fill opacity are separate</strong> — fade a shape's infill to read the drawing underneath while its outline stays crisp. Ticking <strong>Multiply</strong> blends the infill with the page beneath it (same idea as the Overlay bar's Multiply) instead of covering it, so linework shows through even at 100%.</li>
+        <li><strong>Border</strong> — uncheck it on a Text box or Callout to drop the box outline and keep just the infill and the text.</li>
         <li>The <strong>Markups list</strong> shows every markup on the page — color dot, type, and the markup's text abbreviated to its first and last letters. Click to select; <strong>drag rows to change the draw order</strong>, guided by a glowing insertion line.</li>
         <li><strong>Lock</strong> — the padlock at the end of each row (or <strong>Markup ▸ Lock All…</strong>) reversibly "flattens" a markup: it stays drawn in its draw-order slot but can't be selected, moved or edited until unlocked.</li>
         <li><strong>Flatten</strong> — <strong>Markup ▸ Flatten All on Current Page / in Current File</strong> permanently embeds markups into the PDF. They disappear from the markups list and cannot be recovered, so a confirmation is asked first.</li>
@@ -534,7 +598,7 @@ function showHelpDialog(): void {
       <table class="help-keys">
         <tr><td><code>F</code> <code>H</code> <code>Z</code></td><td>Flip / Pan / Zoom Page</td></tr>
         <tr><td><code>R</code> <code>O</code> <code>Shift+P</code> <code>L</code> <code>P</code></td><td>Rectangle / Ellipse / Polygon / Line / Polyline</td></tr>
-        <tr><td><code>T</code> <code>Q</code> <code>D</code> <code>S</code></td><td>Text / Callout / Dimension / Snip</td></tr>
+        <tr><td><code>T</code> <code>Q</code> <code>D</code> <code>Shift+D</code> <code>S</code></td><td>Text / Callout / Dimension / Custom Dimension / Snip</td></tr>
         <tr><td><code>Ctrl/⌘ S</code></td><td>Save</td></tr>
         <tr><td><code>Ctrl/⌘ Z</code> · <code>Shift+Z</code> / <code>Ctrl+Y</code></td><td>Undo · Redo</td></tr>
         <tr><td><code>Ctrl/⌘ X · C · V</code></td><td>Cut · Copy · Paste</td></tr>
@@ -575,6 +639,7 @@ function wireRibbon(root: HTMLElement): void {
       tools: [
         { id: 'text', label: 'Text', key: 'T' },
         { id: 'callout', label: 'Callout', key: 'Q' },
+        { id: 'customDimension', label: 'Custom Dimension', key: 'Shift+D' },
       ],
     },
     {
@@ -637,7 +702,7 @@ function wireRibbon(root: HTMLElement): void {
     <label>Text <select class="text-size">${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === 12 ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
     <label>Weight <select class="line-weight">${LINE_WEIGHT_OPTIONS.map((w) => `<option value="${w}" ${w === 1 ? 'selected' : ''}>${w}</option>`).join('')}<option value="custom">Custom…</option></select></label>
     <label>Style <select class="line-style"><option value="solid">Solid</option><option value="dashed">Dash 1</option><option value="dotted">Dash 2</option><option value="centerline">Centerline</option><option value="cloud">Cloud</option></select></label>
-    <label>Scale <select class="scale-select"><option>None</option>${ARCH_SCALES.map((s) => `<option>${s}</option>`).join('')}${ENG_SCALES.map((s) => `<option>${s}</option>`).join('')}<option value="Custom">Custom…</option></select></label>
+    <label>Scale <select class="scale-select"><option>None</option><option value="${FULL_SCALE_LABEL}">${FULL_SCALE_LABEL} (Full size)</option>${ARCH_SCALES.map((s) => `<option>${s}</option>`).join('')}${ENG_SCALES.map((s) => `<option>${s}</option>`).join('')}<option value="Custom">Custom…</option></select></label>
     <label>Line <button type="button" class="color-box stroke-color" title="Line color"></button></label>
     <label>Fill <button type="button" class="color-box fill-color" title="Fill color"></button></label>
     <label>Text <button type="button" class="color-box text-color" title="Text color"></button></label>
@@ -670,7 +735,7 @@ function wireRibbon(root: HTMLElement): void {
     updateActiveDoc((d) => {
       const defaults = [...d.pageDefaults];
       const idx = d.currentPage;
-      const factor: number | null = label === 'None' ? null : (parseArchScale(label) ?? parseEngScale(label) ?? null);
+      const factor: number | null = scaleFactorForLabel(label);
       defaults[idx] = { ...defaults[idx]!, scaleLabel: label, scaleFactor: factor };
       return { ...d, pageDefaults: defaults, dirty: true };
     });
@@ -1714,8 +1779,35 @@ function renderRightPanel(root: HTMLElement): void {
   const totalsBlock = root.querySelector('.totals-block')!;
   const list = root.querySelector('.markups-list ul')!;
 
+  // The panel is rebuilt wholesale on EVERY state change — cursor moves over
+  // the canvas included — so a field being typed into has to be handed back
+  // its focus, text and caret afterwards, or it can never be filled in.
+  const focused = document.activeElement as HTMLInputElement | null;
+  const typing =
+    focused && props.contains(focused) && focused.tagName === 'INPUT' && focused.dataset.prop
+      ? {
+          prop: focused.dataset.prop,
+          value: focused.value,
+          start: focused.selectionStart,
+          end: focused.selectionEnd,
+        }
+      : null;
+
   props.innerHTML = renderProperties(doc, state.selectedMarkupIds);
   wireProperties(props as HTMLElement, state.selectedMarkupIds[0]);
+
+  if (typing) {
+    const el = props.querySelector<HTMLInputElement>(`input[data-prop="${typing.prop}"]`);
+    if (el) {
+      el.value = typing.value;
+      el.focus();
+      try {
+        el.setSelectionRange(typing.start, typing.end);
+      } catch {
+        /* selection ranges aren't supported on every input type */
+      }
+    }
+  }
   // Totals always live at the bottom of the panel (above the Markups list)
   totalsBlock.innerHTML = renderTotals(doc, state.selectedMarkupIds[0]);
 
@@ -1894,6 +1986,11 @@ function applyDrawOrder(visualFrontToBack: string[]): void {
   import('../state/undo').then(({ applyMarkupChange }) => applyMarkupChange('Reorder', next));
 }
 
+/** Escape a value for an HTML attribute in the property-panel templates. */
+function escapeAttr(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 const ROUND_TO_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Exact' },
   { value: '0.25', label: '1/4"' },
@@ -2009,14 +2106,20 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     .map((s) => `<option value="${s}" ${s === lineStyle ? 'selected' : ''}>${s}</option>`)
     .join('');
 
-  // Infill control (rectangle/ellipse/polygon/text/callout/area)
+  // Infill control (rectangle/ellipse/polygon/text/callout/area). The infill
+  // carries its OWN opacity and an optional Multiply blend, both independent
+  // of the linework opacity below.
   let fillSection = '';
   if (FILL_BEARING_TYPES.includes(m.type)) {
     const fillResolved = m.overrides?.fillColor !== undefined ? m.overrides.fillColor : (defaults?.fillColor ?? null);
     const fillOn = !!fillResolved;
     const fillVal = fillResolved ?? DEFAULT_COLOR;
+    const fillOpacity = m.overrides?.fillOpacity ?? opacity;
+    const multiply = m.overrides?.fillMultiply ?? false;
     fillSection = `
-    <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>`;
+    <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
+    <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>
+    <label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${multiply ? 'checked' : ''} title="Blend the infill with the drawing beneath instead of covering it"></label>`;
   }
   const weightOptions =
     LINE_WEIGHT_OPTIONS.map(
@@ -2041,7 +2144,9 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     </select></label>`;
     if (m.type === 'text' || m.type === 'callout') {
       const lineSpacing = m.overrides?.lineSpacing ?? 1.35;
+      const border = m.overrides?.border ?? true;
       textSection += `
+    <label>Border <input type="checkbox" data-override-flag="border" ${border ? 'checked' : ''} title="Draw the box outline"></label>
     <label>Line spacing <select data-prop="lineSpacing">
       ${LINE_SPACING_OPTIONS.map((s) => `<option value="${s}" ${s === lineSpacing ? 'selected' : ''}>${s === 1 ? 'Single' : s === 2 ? 'Double' : s}</option>`).join('')}
     </select></label>`;
@@ -2100,21 +2205,30 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   if (m.type === 'dimension') {
     const tick = m.tickStyle ?? 'slash';
     const roundTo = m.roundTo !== undefined ? String(m.roundTo) : '';
+    const custom = m.customLabel ?? '';
+    const isCustom = m.customLabel !== undefined;
     dimSection = `
     <hr>
     <label>End style <select data-prop="tickStyle">
       <option value="slash" ${tick === 'slash' ? 'selected' : ''}>Slash tick</option>
       <option value="arrow" ${tick === 'arrow' ? 'selected' : ''}>Arrow</option>
     </select></label>
-    <label>Round up to <select data-prop="roundTo">
+    <label>Custom text <input type="text" class="dim-custom" data-prop="customLabel" value="${escapeAttr(custom)}" placeholder="Measured" title="Shown exactly as typed, ignoring the page scale. Clear it to go back to the measured value."></label>
+    ${isCustom ? '' : `<label>Round up to <select data-prop="roundTo">
       ${ROUND_TO_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === roundTo ? 'selected' : ''}>${o.label}</option>`).join('')}
-    </select></label>`;
+    </select></label>`}`;
   }
+
+  // A dimension carrying typed text is a "custom dimension" — say so, and use
+  // that tool's icon, so the panel matches the button it came from.
+  const isCustomDim = m.type === 'dimension' && m.customLabel !== undefined;
+  const headIcon = isCustomDim ? 'customDimension' : PROP_ICON[m.type] ?? '';
+  const headName = isCustomDim ? 'custom dimension' : m.type;
 
   return `<div class="prop-block">
     <div class="prop-head">
-      <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
-      <div class="prop-head-text"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p></div>
+      <span class="prop-head-icon">${TOOL_ICONS[headIcon] ?? ''}</span>
+      <div class="prop-head-text"><strong>${headName}</strong><p>Page ${m.pageIndex + 1}</p></div>
     </div>
     <div class="prop-section-label">Appearance</div>
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
@@ -2122,7 +2236,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label>Weight <select data-prop="lineWeight">${weightOptions}</select></label>
     <label>Style <select data-prop="lineStyle">${styleOptions}</select></label>
     ${rotationSection}
-    <label class="opacity-row">Opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>
+    <label class="opacity-row">Line opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>
     ${arrowSection}
     ${textSection}
     ${measureToggle}
@@ -2162,6 +2276,10 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         if (prop === 'roundTo' && mk.type === 'dimension') {
           return { ...mk, roundTo: rawValue === '' ? undefined : Number(rawValue) };
         }
+        // Empty custom text drops back to the scale-measured value
+        if (prop === 'customLabel' && mk.type === 'dimension') {
+          return { ...mk, customLabel: rawValue === '' ? undefined : rawValue };
+        }
         if (prop === 'decimals' && mk.type === 'polygon') {
           return { ...mk, decimals: Number(rawValue) };
         }
@@ -2169,7 +2287,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
           return { ...mk, rotation: Number(rawValue) || 0 };
         }
         // Appearance overrides
-        const numeric = ['lineWeight', 'opacity', 'fontSize', 'lineSpacing'];
+        const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
         const value = numeric.includes(prop) ? Number(rawValue) : rawValue;
         return { ...mk, overrides: { ...mk.overrides, [prop]: value } };
       });
@@ -2179,11 +2297,31 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     });
   });
 
-  // Live opacity percentage readout while dragging the slider
+  // Live opacity percentage readouts while dragging the sliders
   const opRange = props.querySelector<HTMLInputElement>('.opacity-range');
   const opVal = props.querySelector<HTMLElement>('.opacity-val');
   opRange?.addEventListener('input', () => {
     if (opVal) opVal.textContent = `${Math.round(Number(opRange.value) * 100)}%`;
+  });
+  const fillRange = props.querySelector<HTMLInputElement>('.fill-opacity-range');
+  const fillVal = props.querySelector<HTMLElement>('.fill-opacity-val');
+  fillRange?.addEventListener('input', () => {
+    if (fillVal) fillVal.textContent = `${Math.round(Number(fillRange.value) * 100)}%`;
+  });
+
+  // Boolean checkboxes that live in `overrides` (Multiply infill, box Border)
+  props.querySelectorAll<HTMLInputElement>('[data-override-flag]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const doc = getActiveDoc();
+      if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
+      const flag = cb.dataset.overrideFlag!;
+      const next = doc.markups.map((mk) =>
+        mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [flag]: cb.checked } } : mk,
+      );
+      import('../state/undo').then(({ applyMarkupChange }) =>
+        applyMarkupChange('Edit properties', next),
+      );
+    });
   });
 
   const setFill = (value: string | null): void => {
@@ -2340,6 +2478,16 @@ function renderTotals(doc: ReturnType<typeof getActiveDoc>, selectedId?: string)
     .join('')}</div>`;
 }
 
+/** Snap readiness for the measure tools, else '' (dropped by the join). */
+function snapStatus(doc: ReturnType<typeof getActiveDoc>, tool: string): string {
+  if (!doc || !SNAP_TOOLS.includes(tool)) return '';
+  if (getSnapIndexSync(doc.id, doc.currentPage)) return 'Snap: on';
+  if (isSnapLoading(doc.id, doc.currentPage)) return 'Snap: reading drawing…';
+  return 'Snap: —';
+}
+
+const SNAP_TOOLS = ['dimension', 'customDimension', 'calibrate'];
+
 function renderStatusBar(root: HTMLElement): void {
   const doc = getActiveDoc();
   const state = getState();
@@ -2348,6 +2496,9 @@ function renderStatusBar(root: HTMLElement): void {
   const page = doc?.pages[doc.currentPage];
   bar.textContent = [
     `Tool: ${state.activeTool}`,
+    // Vector snapping is lazy: extracting a big CAD sheet's geometry takes a
+    // moment, and without a word here it just looks like snapping is broken.
+    snapStatus(doc, state.activeTool),
     `Calibration: ${doc?.pageDefaults[doc.currentPage]?.scaleLabel ?? 'None'}`,
     p ? `Cursor: ${Math.round(p.x)}, ${Math.round(p.y)} pt` : 'Cursor: —',
     `Markups: ${doc?.markups.length ?? 0}`,

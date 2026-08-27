@@ -15,6 +15,7 @@ export type ToolId =
   | 'callout'
   | 'calibrate'
   | 'dimension'
+  | 'customDimension'
   | 'measureAngle'
   | 'snip';
 
@@ -46,7 +47,16 @@ export interface AppearanceOverrides {
   textColor?: string;
   lineWeight?: number;
   lineStyle?: LineStyle;
+  /** Linework + text opacity. Independent of `fillOpacity` below. */
   opacity?: number;
+  /** Infill opacity. Falls back to `opacity` when unset so markups drawn
+   *  before line/fill opacity were split keep their original look. */
+  fillOpacity?: number;
+  /** Composite the infill Photoshop-Multiply style over whatever is beneath
+   *  it (the PDF included) instead of painting over it. */
+  fillMultiply?: boolean;
+  /** Text / callout: draw the box border. Unset = true. */
+  border?: boolean;
   fontSize?: number;
   fontFamily?: string;
   /** Multiple of the font size (1 = single, 2 = double). Text/callout only. */
@@ -147,6 +157,9 @@ export interface LineMarkup extends MarkupBase {
   /** Dimension only: round the displayed value UP to this many real-world
    *  inches (0.25, 1, 6, 12). Undefined = exact. */
   roundTo?: number;
+  /** Dimension only: a typed label that REPLACES the measured value (the
+   *  Custom Dimension tool). Ignores the page scale and `roundTo`. */
+  customLabel?: string;
 }
 
 export interface TextMarkup extends MarkupBase {
@@ -322,6 +335,9 @@ export const FONT_FAMILIES = [
 ];
 
 export const LINE_SPACING_OPTIONS = [1, 1.15, 1.35, 1.5, 2];
+
+/** "Canvas original" scale — 1 paper inch reads as 1 real inch. */
+export const FULL_SCALE_LABEL = '1:1';
 
 export const ARCH_SCALES = [
   '3" = 1\'-0"',

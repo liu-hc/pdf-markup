@@ -1,4 +1,5 @@
 import type { Point } from '../state/types';
+import { FULL_SCALE_LABEL } from '../state/types';
 
 export function dist(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -170,6 +171,14 @@ export function normalizeRect(x: number, y: number, w: number, h: number) {
     width: Math.abs(w),
     height: Math.abs(h),
   };
+}
+
+/** Scale factor (real-world inches per paper inch) for a scale-select label.
+ *  Covers "None", the 1:1 full-size label, and the arch / eng presets. */
+export function scaleFactorForLabel(label: string): number | null {
+  if (!label || label === 'None') return null;
+  if (label === FULL_SCALE_LABEL) return 1;
+  return parseArchScale(label) ?? parseEngScale(label) ?? null;
 }
 
 export function parseArchScale(label: string): number | null {

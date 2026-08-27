@@ -1,4 +1,4 @@
-import { drawMarkupOnCanvas } from '../markups/draw';
+import { drawMarkupOnCanvas, hasMultiplyFill } from '../markups/draw';
 import { calloutLeader, dimensionGeometry } from '../util/geometry';
 import type { Markup, OverlaySlot, PageDefaults, Point } from '../state/types';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
@@ -33,6 +33,9 @@ export class PageView {
    *  other pages when the Overlay bar is active. */
   readonly overlayCanvas: HTMLCanvasElement;
   readonly markupCanvas: HTMLCanvasElement;
+  /** Infills flagged "Multiply" render here instead — this canvas blends with
+   *  `mix-blend-mode: multiply`, so the shading darkens the PDF beneath it. */
+  readonly multiplyCanvas: HTMLCanvasElement;
   readonly svgLayer: SVGSVGElement;
   readonly pageIndex: number;
   private scale = 1;       // layout zoom — CSS px per PDF point
@@ -63,12 +66,21 @@ export class PageView {
     this.detailCanvas.style.display = 'none';
     this.overlayCanvas = document.createElement('canvas');
     this.overlayCanvas.className = 'page-layer overlay-layer';
+    this.multiplyCanvas = document.createElement('canvas');
+    this.multiplyCanvas.className = 'page-layer multiply-layer';
     this.markupCanvas = document.createElement('canvas');
     this.markupCanvas.className = 'page-layer markup-layer';
     this.svgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.svgLayer.classList.add('page-layer', 'svg-layer');
 
-    this.el.append(this.pdfCanvas, this.detailCanvas, this.overlayCanvas, this.markupCanvas, this.svgLayer);
+    this.el.append(
+      this.pdfCanvas,
+      this.detailCanvas,
+      this.overlayCanvas,
+      this.multiplyCanvas,
+      this.markupCanvas,
+      this.svgLayer,
+    );
   }
 
   /** Apply the page geometry + zoom to the DOM synchronously. Existing bitmaps
@@ -171,14 +183,15 @@ export class PageView {
     const cur = this.region;
     if (next.x === cur.x && next.y === cur.y && next.w === cur.w && next.h === cur.h) return false;
     this.region = next;
-    const mc = this.markupCanvas;
-    mc.style.left = `${next.x}px`;
-    mc.style.top = `${next.y}px`;
-    mc.style.width = `${next.w}px`;
-    mc.style.height = `${next.h}px`;
-    if (mc.width !== next.w || mc.height !== next.h) {
-      mc.width = next.w;
-      mc.height = next.h;
+    for (const mc of [this.markupCanvas, this.multiplyCanvas]) {
+      mc.style.left = `${next.x}px`;
+      mc.style.top = `${next.y}px`;
+      mc.style.width = `${next.w}px`;
+      mc.style.height = `${next.h}px`;
+      if (mc.width !== next.w || mc.height !== next.h) {
+        mc.width = next.w;
+        mc.height = next.h;
+      }
     }
     return true;
   }
@@ -302,12 +315,27 @@ export class PageView {
   }
 
   redrawMarkups(markups: Markup[], defaults: PageDefaults): void {
+    const pageMarkups = markups.filter((m) => m.pageIndex === this.pageIndex);
+    // Multiply-flagged infills go on their own blended canvas beneath the
+    // normal one; that canvas stays empty (and unblended) when nothing uses it.
+    const multiplied = pageMarkups.filter((m) => hasMultiplyFill(m, defaults));
+    const mctx = this.multiplyCanvas.getContext('2d')!;
+    mctx.setTransform(1, 0, 0, 1, 0, 0);
+    mctx.clearRect(0, 0, this.multiplyCanvas.width, this.multiplyCanvas.height);
+    this.multiplyCanvas.style.mixBlendMode = multiplied.length ? 'multiply' : '';
+    if (multiplied.length) {
+      mctx.translate(-this.region.x, -this.region.y);
+      for (const m of multiplied) {
+        drawMarkupOnCanvas(mctx, m, defaults, this.scale, this.pageHeight, 'multiply');
+      }
+      mctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
     const ctx = this.markupCanvas.getContext('2d')!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.markupCanvas.width, this.markupCanvas.height);
     // The canvas covers only the visible region — shift page space into it
     ctx.translate(-this.region.x, -this.region.y);
-    const pageMarkups = markups.filter((m) => m.pageIndex === this.pageIndex);
     for (const m of pageMarkups) {
       drawMarkupOnCanvas(ctx, m, defaults, this.scale, this.pageHeight);
     }
@@ -340,7 +368,14 @@ export class PageView {
         tmp.height,
       );
     }
-    // Markups (region canvas — shift into its space)
+    // Markups (region canvases — shift into their space). The multiply layer
+    // blends with what's already been composited, matching the screen.
+    if (this.multiplyCanvas.style.mixBlendMode === 'multiply') {
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(this.multiplyCanvas, x - this.region.x, y - this.region.y, w, h, 0, 0, tmp.width, tmp.height);
+      ctx.restore();
+    }
     ctx.drawImage(this.markupCanvas, x - this.region.x, y - this.region.y, w, h, 0, 0, tmp.width, tmp.height);
     return tmp;
   }
@@ -362,6 +397,8 @@ export class PageView {
     this.overlayCanvas.height = 1;
     this.markupCanvas.width = 1;
     this.markupCanvas.height = 1;
+    this.multiplyCanvas.width = 1;
+    this.multiplyCanvas.height = 1;
   }
 
   clearSvg(): void {
@@ -465,6 +502,37 @@ export class PageView {
     rect.setAttribute('stroke-width', '1.5');
     rect.setAttribute('stroke-dasharray', '6 4');
     this.svgLayer.appendChild(rect);
+  }
+
+  /** Snap indicator at a page point — appended to (never clearing) whatever
+   *  preview is already on the SVG layer. A square marks a vertex/corner, a
+   *  triangle a segment midpoint, a circle a point along an edge. */
+  drawSnapMarker(p: Point, kind: 'vertex' | 'midpoint' | 'edge'): void {
+    const ns = 'http://www.w3.org/2000/svg';
+    const cx = p.x * this.scale;
+    const cy = (this.pageHeight - p.y) * this.scale;
+    const r = 6;
+    let el: SVGElement;
+    if (kind === 'vertex') {
+      el = document.createElementNS(ns, 'rect');
+      el.setAttribute('x', String(cx - r));
+      el.setAttribute('y', String(cy - r));
+      el.setAttribute('width', String(r * 2));
+      el.setAttribute('height', String(r * 2));
+    } else if (kind === 'midpoint') {
+      el = document.createElementNS(ns, 'polygon');
+      el.setAttribute(
+        'points',
+        `${cx},${cy - r} ${cx + r},${cy + r * 0.7} ${cx - r},${cy + r * 0.7}`,
+      );
+    } else {
+      el = document.createElementNS(ns, 'circle');
+      el.setAttribute('cx', String(cx));
+      el.setAttribute('cy', String(cy));
+      el.setAttribute('r', String(r));
+    }
+    el.setAttribute('class', 'snap-marker');
+    this.svgLayer.appendChild(el);
   }
 
   drawPreview(points: Point[], closed: boolean, color = '#002060'): void {
