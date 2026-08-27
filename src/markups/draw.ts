@@ -273,9 +273,11 @@ export function drawMarkupOnCanvas(
         drawArrow(ctx, d2s, d1s, 'filled', style.lineWeight * scale);
       }
       const len = dist({ x: markup.x1, y: markup.y1 }, { x: markup.x2, y: markup.y2 });
-      // A custom dimension carries its own typed text and ignores the scale
+      // "Override dimension" carries typed text and ignores the scale. An
+      // override cleared to blank draws no label at all — that's a deliberate
+      // state (a dimension line with no text), not a fallback to measured.
       const label =
-        markup.customLabel !== undefined && markup.customLabel !== ''
+        markup.customLabel !== undefined
           ? markup.customLabel
           : formatLength(len, defaults.scaleFactor, markup.roundTo);
       const loff = 11 * scale;

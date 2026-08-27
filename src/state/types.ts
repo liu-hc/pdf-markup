@@ -15,7 +15,6 @@ export type ToolId =
   | 'callout'
   | 'calibrate'
   | 'dimension'
-  | 'customDimension'
   | 'measureAngle'
   | 'snip';
 
@@ -157,8 +156,9 @@ export interface LineMarkup extends MarkupBase {
   /** Dimension only: round the displayed value UP to this many real-world
    *  inches (0.25, 1, 6, 12). Undefined = exact. */
   roundTo?: number;
-  /** Dimension only: a typed label that REPLACES the measured value (the
-   *  Custom Dimension tool). Ignores the page scale and `roundTo`. */
+  /** Dimension only: a typed label that REPLACES the measured value when
+   *  "Override dimension" is ticked in the properties panel. Ignores the page
+   *  scale and `roundTo`. Undefined = show the measured value. */
   customLabel?: string;
 }
 
@@ -272,6 +272,10 @@ export interface AppState {
   lastNavTool: 'select' | 'zoom';
   selectedMarkupIds: string[];
   cursorPagePoint: Point | null;
+  /** Page the cursor is over. In continuous mode that isn't always
+   *  `currentPage` (which follows the scroll position), and Paste needs the
+   *  page actually under the pointer. */
+  cursorPageIndex: number | null;
   leftPanelVisible: boolean;
   rightPanelVisible: boolean;
   leftPanelWidth: number;

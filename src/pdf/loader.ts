@@ -68,6 +68,19 @@ export async function createBlankDocument(
   return loadPdfFromFile(file, null);
 }
 
+/* ── Images → a working PDF ──────────────────────────────────────────────
+   A JPEG or PNG embeds straight into pdf-lib and becomes a one-page PDF the
+   app can mark up like any other. It has no file handle, so Save prompts for
+   a location the way a new document does. */
+
+/** Image types the app will wrap into a PDF. */
+const IMAGE_EXT_RE = /\.(png|jpe?g)$/i;
+const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg']);
+
+export function isSupportedImage(file: File): boolean {
+  return IMAGE_MIME.has(file.type.toLowerCase()) || IMAGE_EXT_RE.test(file.name);
+}
+
 /** Wrap a JPEG/PNG in a single-page PDF (page sized to the image) and open it. */
 export async function openImageAsDocument(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -78,20 +91,30 @@ export async function openImageAsDocument(file: File): Promise<string> {
   const page = pdf.addPage([img.width, img.height]);
   page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
   const out = new Uint8Array(await pdf.save());
-  const name = file.name.replace(/\.(png|jpe?g)$/i, '.pdf');
+  const name = file.name.replace(IMAGE_EXT_RE, '') + '.pdf';
   const pdfFile = new File([out], name, { type: 'application/pdf' });
   return loadPdfFromFile(pdfFile, null);
 }
 
-/** Open a dropped/selected file as a new document, if it's a supported type. */
+/** Open a dropped/selected file as a new document, if it's a supported type.
+ *  Reports a readable reason rather than failing silently. */
 export async function openDroppedFile(file: File): Promise<boolean> {
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
     await loadPdfFromFile(file, null);
     return true;
   }
-  if (file.type === 'image/png' || file.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(file.name)) {
-    await openImageAsDocument(file);
-    return true;
+  if (isSupportedImage(file)) {
+    try {
+      await openImageAsDocument(file);
+      return true;
+    } catch (err) {
+      const { showErrorDialog } = await import('../ui/notify');
+      showErrorDialog(
+        'Could not open image',
+        `"${file.name}" could not be converted to a PDF. ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
   }
   return false;
 }
@@ -107,14 +130,18 @@ async function loadPageInfos(pdfDoc: PDFDocumentProxy): Promise<PageInfo[]> {
   return pages;
 }
 
+/** File > Open. Takes PDFs and images alike; an image is wrapped into a
+ *  working PDF (see openImageAsDocument). Only a real PDF keeps its file
+ *  handle — a converted image has no file to save back over, so it saves
+ *  through Save As like a new document. */
 export async function openFilePicker(): Promise<void> {
   if (!('showOpenFilePicker' in window)) {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pdf,application/pdf';
+    input.accept = '.pdf,application/pdf,.png,.jpg,.jpeg,image/png,image/jpeg';
     input.onchange = async () => {
       const file = input.files?.[0];
-      if (file) await loadPdfFromFile(file, null);
+      if (file) await openDroppedFile(file);
     };
     input.click();
     return;
@@ -122,11 +149,30 @@ export async function openFilePicker(): Promise<void> {
   const w = window as Window & {
     showOpenFilePicker: (opts: object) => Promise<FileSystemFileHandle[]>;
   };
-  const [handle] = await w.showOpenFilePicker({
-    types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
-    multiple: false,
-  });
+  let handle: FileSystemFileHandle | undefined;
+  try {
+    [handle] = await w.showOpenFilePicker({
+      types: [
+        {
+          description: 'PDF and images',
+          accept: {
+            'application/pdf': ['.pdf'],
+            'image/png': ['.png'],
+            'image/jpeg': ['.jpg', '.jpeg'],
+          },
+        },
+      ],
+      multiple: false,
+    });
+  } catch {
+    return; // the user dismissed the picker
+  }
+  if (!handle) return;
   const file = await handle.getFile();
+  if (isSupportedImage(file) && !/\.pdf$/i.test(file.name)) {
+    await openDroppedFile(file);
+    return;
+  }
   await loadPdfFromFile(file, handle);
 }
 

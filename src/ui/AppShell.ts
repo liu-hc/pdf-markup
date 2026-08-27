@@ -31,6 +31,16 @@ import { formatLength, formatArea, formatAngle } from '../util/units';
 import { polygonArea, polylineLength, dist, angleDegrees } from '../util/geometry';
 import type { Workspace } from '../view/Workspace';
 
+/** Modifier prefix for the menu shortcut hints — the Command glyph on a Mac,
+ *  "Ctrl+" elsewhere. Cosmetic only; the handlers accept either key. */
+const MOD_KEY = /Mac|iPhone|iPad/i.test(
+  (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ??
+    navigator.platform ??
+    '',
+)
+  ? '\u2318'
+  : 'Ctrl+';
+
 /* ── Tool icon library ─────────────────────────────────────────────────── */
 const TOOL_ICONS: Record<string, string> = {
   flip: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5V3.4c0-.5.4-.9.9-.9H9.5l3.5 3.5v3.5"/><path d="M9.5 2.5V6H13"/><path d="M4 9.5v4.6c0 .5.4.9.9.9h3.6" stroke-dasharray="1.8 1.6"/><path d="M13 10a4 4 0 0 1-3 4.6"/><path d="M9 12.6l1 2 2.1-.7"/></svg>`,
@@ -49,7 +59,6 @@ const TOOL_ICONS: Record<string, string> = {
   calibrate: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="1.6" x2="9" y2="4.2"/><circle cx="9" cy="4.5" r="1"/><line x1="8.6" y1="5.3" x2="3.4" y2="15.6"/><line x1="9.4" y1="5.3" x2="14.6" y2="15.6"/><path d="M3.4 15.6l-.6 1.1M14.6 15.6l.6 1.1"/></svg>`,
   dimension: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="7" x2="15" y2="7"/><line x1="3" y1="5.5" x2="3" y2="16"/><line x1="15" y1="5.5" x2="15" y2="16"/><line x1="1" y1="9" x2="5" y2="5"/><line x1="13" y1="9" x2="17" y2="5"/></svg>`,
   measureAngle: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="14" x2="16" y2="14"/><line x1="3" y1="14" x2="13" y2="4"/><path d="M10 14 A7 7 0 0 0 7.95 9.05" fill="none"/><circle cx="3" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>`,
-  customDimension: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="11" x2="15" y2="11"/><line x1="3" y1="9.5" x2="3" y2="16"/><line x1="15" y1="9.5" x2="15" y2="16"/><line x1="1" y1="13" x2="5" y2="9"/><line x1="13" y1="13" x2="17" y2="9"/><text x="9" y="7" font-size="8" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">12</text></svg>`,
   snip: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="10" height="8" stroke-dasharray="2 1.6"/><circle cx="10.6" cy="15" r="1.5"/><circle cx="14.8" cy="12.6" r="1.5"/><line x1="11.7" y1="13.9" x2="14.5" y2="8.5"/><line x1="13.6" y1="11.7" x2="9" y2="8.5"/></svg>`,
   overlay: `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="8" height="10" rx="1"/><rect x="7.5" y="5.5" width="8" height="10" rx="1" fill="currentColor" opacity="0.15"/><rect x="7.5" y="5.5" width="8" height="10" rx="1"/></svg>`,
 };
@@ -65,22 +74,22 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="new">New…</li>
           <li data-action="open">Open…</li>
           <li class="sep"></li>
-          <li data-action="save">Save</li>
+          <li data-action="save">Save<span class="menu-key">${MOD_KEY}S</span></li>
           <li data-action="save-as">Save As…</li>
           <li class="sep"></li>
           <li data-action="close">Close Current</li>
           <li data-action="close-all">Close All</li>
         </ul></div>
         <div class="menu-item" data-menu="edit">Edit<ul class="dropdown">
-          <li data-action="undo">Undo</li>
-          <li data-action="redo">Redo</li>
+          <li data-action="undo">Undo<span class="menu-key">${MOD_KEY}Z</span></li>
+          <li data-action="redo">Redo<span class="menu-key">${MOD_KEY}&#8679;Z</span></li>
           <li class="sep"></li>
-          <li data-action="cut">Cut</li>
-          <li data-action="copy">Copy</li>
-          <li data-action="paste">Paste</li>
-          <li data-action="paste-in-place">Paste in Place</li>
-          <li data-action="duplicate">Duplicate</li>
-          <li data-action="delete">Delete</li>
+          <li data-action="cut">Cut<span class="menu-key">${MOD_KEY}X</span></li>
+          <li data-action="copy">Copy<span class="menu-key">${MOD_KEY}C</span></li>
+          <li data-action="paste">Paste<span class="menu-key">${MOD_KEY}V</span></li>
+          <li data-action="paste-in-place">Paste in Place<span class="menu-key">${MOD_KEY}&#8679;V</span></li>
+          <li data-action="duplicate">Duplicate<span class="menu-key">${MOD_KEY}D</span></li>
+          <li data-action="delete">Delete<span class="menu-key">&#9003;</span></li>
         </ul></div>
         <div class="menu-item" data-menu="view">View<ul class="dropdown">
           <li data-action="continuous">Continuous</li>
@@ -171,6 +180,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   // once the shell is in the DOM — re-run after mount and on window resize.
   requestAnimationFrame(() => renderChrome(root, workspace, secondaryWorkspace));
   window.addEventListener('resize', () => renderChrome(root, workspace, secondaryWorkspace));
+  wireUnloadGuard();
   return root;
 }
 
@@ -445,6 +455,27 @@ function confirmDialog(title: string, message: string, confirmLabel = 'OK'): Pro
 /** Close a document, prompting to save first if it has unsaved changes (the
  *  doc is only marked dirty by edits — navigation after a save won't prompt).
  *  Returns false if the user cancelled. */
+/** Guard the tab/window itself: while any open document has edits that
+ *  haven't been through Save or Save As, closing or reloading raises the
+ *  browser's "Leave site?" confirmation.
+ *
+ *  This is as far as the platform goes. A page cannot show its own dialog
+ *  during unload, cannot word the browser's one, and cannot save on the way
+ *  out — so the Save / Don't Save / Cancel prompt that File > Close and the
+ *  tab close buttons use (askSaveBeforeClose) is not available here. All the
+ *  guard can do is stop an accidental close; the user then saves from inside
+ *  the app. Chrome also ignores the guard entirely until the user has
+ *  interacted with the page at least once. */
+function wireUnloadGuard(): void {
+  window.addEventListener('beforeunload', (e) => {
+    if (!getState().documents.some((d) => d.dirty)) return;
+    e.preventDefault();
+    // Legacy channel — browsers no longer show the text, but older ones
+    // needed a non-empty assignment to raise the dialog at all.
+    e.returnValue = 'You have unsaved markups.';
+  });
+}
+
 async function requestCloseDocument(docId: string): Promise<boolean> {
   const doc = getState().documents.find((d) => d.id === docId);
   if (!doc) return true;
@@ -550,7 +581,6 @@ function showHelpDialog(): void {
       <ul>
         <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
         <li><strong>Callout (Q)</strong> — two clicks: arrow tip → text box, then type. The leader exits the box horizontally (default 25pt flat run) and bends at the elbow, which keeps its own drag handle for adjusting the distance.</li>
-        <li><strong>Custom Dimension (Shift+D)</strong> — placed exactly like a Dimension, but you type the label. The prompt is seeded with what the page scale measures; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a dimension the drawing isn't to scale for). Clear the <strong>Custom text</strong> box in the properties panel to hand it back to the scale.</li>
         <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
       </ul>
     </div>
@@ -560,6 +590,7 @@ function showHelpDialog(): void {
       <ul>
         <li><strong>Calibrate</strong> — click two points across a known distance and type its real-world length; this sets the page <strong>scale</strong>. You can also pick a preset in the ribbon: <code>1:1 (Full size)</code> for reading the sheet at its own size, architectural <code>1/4" = 1'-0"</code> …, or engineering <code>1" = 100'</code>.</li>
         <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
+        <li><strong>Override dimension</strong> — tick it in a selected dimension's properties to type the value yourself instead of measuring it off the page scale. The box opens seeded with what the scale currently reads; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a detail the drawing isn't to scale for). Clear the value for a dimension line with no text; untick the box to hand it back to the scale.</li>
         <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
         <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, Calibrate and both Dimension tools pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), then a segment <em>midpoint</em> (triangle), then the nearest point <em>along</em> a line or curve (circle). The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. The third (offset) click never snaps.</li>
         <li>Per-page <strong>Totals</strong> (linear, polyline, area) accumulate in the inspector.</li>
@@ -581,7 +612,9 @@ function showHelpDialog(): void {
 
     <div class="help-section"><h4>Documents: open → save → reopen</h4>
       ${fig(guideDocuments, 'Document lifecycle: open, mark up, save, reopen editable, or flatten')}
-      <p>Saving writes the markups into the PDF itself — both as visible vector content and as recoverable metadata — so a saved file <strong>reopens with every markup still editable</strong>. Use <strong>Markup ▸ Flatten All…</strong> to bake markups permanently into the page instead. Saving writes in place where the browser allows it (with Save As and download fallbacks). Images (JPG/PNG) open wrapped in a single PDF page.</p>
+      <p>Saving writes the markups into the PDF itself — both as visible vector content and as recoverable metadata — so a saved file <strong>reopens with every markup still editable</strong>. Use <strong>Markup ▸ Flatten All…</strong> to bake markups permanently into the page instead. Saving writes in place where the browser allows it (with Save As and download fallbacks).</p>
+      <p><strong>Images</strong> — JPEG and PNG open too, via <strong>File &#9656; Open</strong> or by dropping them on the menubar. Each is wrapped into a one-page PDF you can mark up and save like any other. A converted image has no file of its own to write back to, so <strong>Save</strong> asks where to put the PDF the first time.</p>
+      <p><strong>Unsaved work</strong> — closing a document (File &#9656; Close, Close All, or a tab's ✕) asks whether to save first. Closing or reloading the browser tab while anything is unsaved raises the browser's own "Leave site?" confirmation — that dialog is the browser's, so it can only offer Leave or Cancel; save from inside the app before leaving.</p>
     </div>
 
     <div class="help-section"><h4>Advanced</h4>
@@ -598,7 +631,7 @@ function showHelpDialog(): void {
       <table class="help-keys">
         <tr><td><code>F</code> <code>H</code> <code>Z</code></td><td>Flip / Pan / Zoom Page</td></tr>
         <tr><td><code>R</code> <code>O</code> <code>Shift+P</code> <code>L</code> <code>P</code></td><td>Rectangle / Ellipse / Polygon / Line / Polyline</td></tr>
-        <tr><td><code>T</code> <code>Q</code> <code>D</code> <code>Shift+D</code> <code>S</code></td><td>Text / Callout / Dimension / Custom Dimension / Snip</td></tr>
+        <tr><td><code>T</code> <code>Q</code> <code>D</code> <code>S</code></td><td>Text / Callout / Dimension / Snip</td></tr>
         <tr><td><code>Ctrl/⌘ S</code></td><td>Save</td></tr>
         <tr><td><code>Ctrl/⌘ Z</code> · <code>Shift+Z</code> / <code>Ctrl+Y</code></td><td>Undo · Redo</td></tr>
         <tr><td><code>Ctrl/⌘ X · C · V</code></td><td>Cut · Copy · Paste</td></tr>
@@ -639,7 +672,6 @@ function wireRibbon(root: HTMLElement): void {
       tools: [
         { id: 'text', label: 'Text', key: 'T' },
         { id: 'callout', label: 'Callout', key: 'Q' },
-        { id: 'customDimension', label: 'Custom Dimension', key: 'Shift+D' },
       ],
     },
     {
@@ -2205,30 +2237,29 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   if (m.type === 'dimension') {
     const tick = m.tickStyle ?? 'slash';
     const roundTo = m.roundTo !== undefined ? String(m.roundTo) : '';
-    const custom = m.customLabel ?? '';
-    const isCustom = m.customLabel !== undefined;
+    // Override: the label is typed instead of measured. Ticking the box seeds
+    // it with what the scale currently reads, so there's something to edit;
+    // unticking hands the dimension back to the scale.
+    const isOverride = m.customLabel !== undefined;
+    const overrideText = m.customLabel ?? '';
     dimSection = `
     <hr>
     <label>End style <select data-prop="tickStyle">
       <option value="slash" ${tick === 'slash' ? 'selected' : ''}>Slash tick</option>
       <option value="arrow" ${tick === 'arrow' ? 'selected' : ''}>Arrow</option>
     </select></label>
-    <label>Custom text <input type="text" class="dim-custom" data-prop="customLabel" value="${escapeAttr(custom)}" placeholder="Measured" title="Shown exactly as typed, ignoring the page scale. Clear it to go back to the measured value."></label>
-    ${isCustom ? '' : `<label>Round up to <select data-prop="roundTo">
+    <label>Override dimension <input type="checkbox" data-dim-override ${isOverride ? 'checked' : ''} title="Type the dimension instead of measuring it off the page scale"></label>
+    ${isOverride
+      ? `<label>Value <input type="text" class="dim-custom" data-prop="customLabel" value="${escapeAttr(overrideText)}" placeholder="e.g. 12'-6&quot;" title="Drawn exactly as typed — the page scale is ignored."></label>`
+      : `<label>Round up to <select data-prop="roundTo">
       ${ROUND_TO_OPTIONS.map((o) => `<option value="${o.value}" ${o.value === roundTo ? 'selected' : ''}>${o.label}</option>`).join('')}
     </select></label>`}`;
   }
 
-  // A dimension carrying typed text is a "custom dimension" — say so, and use
-  // that tool's icon, so the panel matches the button it came from.
-  const isCustomDim = m.type === 'dimension' && m.customLabel !== undefined;
-  const headIcon = isCustomDim ? 'customDimension' : PROP_ICON[m.type] ?? '';
-  const headName = isCustomDim ? 'custom dimension' : m.type;
-
   return `<div class="prop-block">
     <div class="prop-head">
-      <span class="prop-head-icon">${TOOL_ICONS[headIcon] ?? ''}</span>
-      <div class="prop-head-text"><strong>${headName}</strong><p>Page ${m.pageIndex + 1}</p></div>
+      <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
+      <div class="prop-head-text"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p></div>
     </div>
     <div class="prop-section-label">Appearance</div>
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
@@ -2276,9 +2307,10 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         if (prop === 'roundTo' && mk.type === 'dimension') {
           return { ...mk, roundTo: rawValue === '' ? undefined : Number(rawValue) };
         }
-        // Empty custom text drops back to the scale-measured value
+        // Stays an override even when blanked — untick the box to go back to
+        // the measured value.
         if (prop === 'customLabel' && mk.type === 'dimension') {
-          return { ...mk, customLabel: rawValue === '' ? undefined : rawValue };
+          return { ...mk, customLabel: rawValue };
         }
         if (prop === 'decimals' && mk.type === 'polygon') {
           return { ...mk, decimals: Number(rawValue) };
@@ -2307,6 +2339,28 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   const fillVal = props.querySelector<HTMLElement>('.fill-opacity-val');
   fillRange?.addEventListener('input', () => {
     if (fillVal) fillVal.textContent = `${Math.round(Number(fillRange.value) * 100)}%`;
+  });
+
+  // Override dimension: ticking it seeds the typed value with whatever the
+  // page scale currently reads, so the field opens with something to edit.
+  props.querySelector<HTMLInputElement>('[data-dim-override]')?.addEventListener('change', (e) => {
+    const on = (e.target as HTMLInputElement).checked;
+    const doc = getActiveDoc();
+    const m = doc?.markups.find((mk) => mk.id === selectedId);
+    if (!doc || !m || m.type !== 'dimension') return;
+    const seed = on
+      ? formatLength(
+          dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }),
+          doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null,
+          m.roundTo,
+        )
+      : undefined;
+    const next = doc.markups.map((mk) =>
+      mk.id === selectedId ? { ...mk, customLabel: seed } : mk,
+    );
+    import('../state/undo').then(({ applyMarkupChange }) =>
+      applyMarkupChange(on ? 'Override dimension' : 'Clear dimension override', next),
+    );
   });
 
   // Boolean checkboxes that live in `overrides` (Multiply infill, box Border)
@@ -2486,7 +2540,7 @@ function snapStatus(doc: ReturnType<typeof getActiveDoc>, tool: string): string 
   return 'Snap: —';
 }
 
-const SNAP_TOOLS = ['dimension', 'customDimension', 'calibrate'];
+const SNAP_TOOLS = ['dimension', 'calibrate'];
 
 function renderStatusBar(root: HTMLElement): void {
   const doc = getActiveDoc();

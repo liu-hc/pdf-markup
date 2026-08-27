@@ -253,6 +253,9 @@ input, select, textarea, button {
 }
 
 .dropdown li {
+  display: flex;
+  align-items: center;
+  gap: 24px;
   padding: 6px 11px;
   cursor: pointer;
   font-size: var(--font-md);
@@ -261,11 +264,25 @@ input, select, textarea, button {
   transition: background var(--t);
 }
 
+/* Shortcut hint, pinned to the right of its command */
+.dropdown li .menu-key {
+  margin-left: auto;
+  font-size: var(--font-sm, 11px);
+  color: var(--text-3, rgba(255, 255, 255, 0.45));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dropdown li:hover .menu-key {
+  color: var(--text-2, rgba(255, 255, 255, 0.7));
+}
+
 .dropdown li:hover {
   background: var(--chrome-4);
 }
 
 .dropdown li.sep {
+  display: block;
   height: 1px;
   padding: 0;
   margin: 4px 6px;

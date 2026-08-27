@@ -706,6 +706,6 @@ export class Workspace {
 
   updateCursorFromEvent(e: PointerEvent, pv: PageView): void {
     const p = pv.screenToPage(e.clientX, e.clientY);
-    setCursorPagePoint(p);
+    setCursorPagePoint(p, pv.pageIndex);
   }
 }

@@ -18,7 +18,6 @@ import type {
   ToolId,
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
-import { formatLength } from '../util/units';
 import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
 import { measureTextBlockHeight } from '../markups/draw';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
@@ -83,8 +82,6 @@ interface DimDraw {
   pageIndex: number;
   p1: Point;
   p2: Point | null;
-  /** Custom Dimension: the label is typed, not measured off the scale. */
-  custom: boolean;
 }
 
 /** How close (screen px) the cursor must be for a vector snap to take. */
@@ -92,7 +89,7 @@ const SNAP_RADIUS_PX = 12;
 
 /** Tools that snap to the PDF's own vector geometry. */
 function usesVectorSnap(tool: ToolId): boolean {
-  return tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate';
+  return tool === 'dimension' || tool === 'calibrate';
 }
 
 /** The snap the last pointer move resolved, so a click lands on exactly the
@@ -389,7 +386,7 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
 
   // Callout, Dimension and Calibrate are discrete multi-click tools — clicks
   // are registered on pointerup.
-  if (tool === 'callout' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate') {
+  if (tool === 'callout' || tool === 'dimension' || tool === 'calibrate') {
     e.preventDefault();
     return;
   }
@@ -495,9 +492,9 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
     return;
   }
 
-  // Dimension / Custom Dimension: live preview (segment, then offset line),
-  // with the cursor snapped to the drawing's own vector geometry
-  if ((tool === 'dimension' || tool === 'customDimension') && dimDraw) {
+  // Dimension: live preview (segment, then offset line), with the cursor
+  // snapped to the drawing's own vector geometry
+  if (tool === 'dimension' && dimDraw) {
     const raw = dimDraw.pv.screenToPage(e.clientX, e.clientY);
     // Only the two measured points snap; the third click just pulls the
     // dimension line out to an offset and shouldn't grab drawing geometry.
@@ -638,13 +635,13 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   }
 
   // Dimension: discrete clicks (start → end → pull offset)
-  if (tool === 'dimension' || tool === 'customDimension') {
+  if (tool === 'dimension') {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? dimDraw?.pv ?? null;
     if (!pv) return;
     const raw = pv.screenToPage(e.clientX, e.clientY);
     // Clicks 1 and 2 snap to drawing geometry; click 3 is a free offset pull
     const pt = dimDraw?.p2 ? raw : snappedClickPoint(pv, raw);
-    handleDimClick(pv, pt, e, ws, tool === 'customDimension');
+    handleDimClick(pv, pt, e, ws);
     return;
   }
 
@@ -1020,7 +1017,7 @@ function previewColor(pageIndex: number): string {
 
 function previewRect(pv: PageView, a: Point, b: Point, tool: ToolId, shift = false): void {
   // Shift constrains a line / dimension / calibration to horizontal or vertical
-  if (shift && (tool === 'line' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate')) b = orthoSnap(a, b);
+  if (shift && (tool === 'line' || tool === 'dimension' || tool === 'calibrate')) b = orthoSnap(a, b);
   pv.clearSvg();
   const ns = 'http://www.w3.org/2000/svg';
   const scale = pv.getScale();
@@ -1031,7 +1028,7 @@ function previewRect(pv: PageView, a: Point, b: Point, tool: ToolId, shift = fal
   const h = Math.abs(b.y - a.y) * scale;
   const color = previewColor(pv.pageIndex);
 
-  if (tool === 'line' || tool === 'dimension' || tool === 'customDimension' || tool === 'calibrate') {
+  if (tool === 'line' || tool === 'dimension' || tool === 'calibrate') {
     const line = document.createElementNS(ns, 'line');
     line.setAttribute('x1', String(a.x * scale));
     line.setAttribute('y1', String((ph - a.y) * scale));
@@ -1266,17 +1263,11 @@ function perpOffset(p1: Point, p2: Point, p: Point): number {
   return (p.x - midX) * nx + (p.y - midY) * ny;
 }
 
-function handleDimClick(
-  pv: PageView,
-  p: Point,
-  e: PointerEvent,
-  ws: Workspace,
-  custom = false,
-): void {
+function handleDimClick(pv: PageView, p: Point, e: PointerEvent, ws: Workspace): void {
   const color = previewColor(pv.pageIndex);
   if (!dimDraw) {
     // Click 1: first measured point
-    dimDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null, custom };
+    dimDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null };
     pv.drawPreview([dimDraw.p1, dimDraw.p1], false, color);
     return;
   }
@@ -1288,31 +1279,10 @@ function handleDimClick(
   }
   // Click 3: pull the dimension line to a custom offset
   const { p1, p2, pageIndex } = dimDraw;
-  const wasCustom = dimDraw.custom;
   const offset = perpOffset(p1, p2, p);
   dimDraw = null;
   activeSnap = null;
   pv.clearSvg();
-  // A Custom Dimension carries typed text instead of a measured value — ask
-  // for it now, seeded with whatever the page scale would have read.
-  let customLabel: string | undefined;
-  if (wasCustom) {
-    const measured = formatLength(
-      Math.hypot(p2.x - p1.x, p2.y - p1.y),
-      getActiveDoc()?.pageDefaults[pageIndex]?.scaleFactor ?? null,
-    );
-    const typed = prompt(
-      'Dimension text — shown exactly as typed, independent of the page scale\n(e.g. 12\'-6", VERIFY IN FIELD, EQ)',
-      measured,
-    );
-    if (typed === null) {
-      // Cancelled — drop the dimension rather than committing a measured one
-      returnToNavTool();
-      ws.redrawAllMarkups();
-      return;
-    }
-    customLabel = typed;
-  }
   const markup: Markup = {
     id: uid(),
     type: 'dimension',
@@ -1322,7 +1292,6 @@ function handleDimClick(
     x2: p2.x,
     y2: p2.y,
     offset,
-    ...(customLabel !== undefined ? { customLabel } : {}),
   };
   applyMarkupChange('Add markup', [...docMarkups(), markup]);
   returnToNavTool();
@@ -1351,7 +1320,7 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
   const color = previewColor(pv.pageIndex);
   if (!calibDraw) {
     // Click 1: first endpoint
-    calibDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null, custom: false };
+    calibDraw = { pv, pageIndex: pv.pageIndex, p1: { ...p }, p2: null };
     pv.drawPreview([calibDraw.p1, calibDraw.p1], false, color);
     return;
   }
@@ -1363,7 +1332,7 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
   const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
   if (len < 1) {
     // Too short to be meaningful — restart from this click
-    calibDraw = { pv, pageIndex, p1: { ...p }, p2: null, custom: false };
+    calibDraw = { pv, pageIndex, p1: { ...p }, p2: null };
     return;
   }
   activeSnap = null;
@@ -1466,8 +1435,8 @@ async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace
     height: r.height,
     imageData,
   };
-  // The snip goes to the clipboard only — paste (Ctrl+V) places it with its
-  // lower-left corner at the cursor.
+  // The snip goes to the clipboard only — paste (Ctrl+V) centres it on the
+  // cursor, like any other pasted markup.
   updateActiveDoc((d) => ({ ...d, clipboard: [snip] }));
   returnToNavTool();
   // Best-effort: also put the PNG on the system clipboard
@@ -2116,56 +2085,72 @@ export function handleEditAction(action: string): void {
   }
 }
 
+/** Paste the clipboard onto the page.
+ *
+ *  Plain Paste lands ON THE CURSOR: the pasted set's bounding box is centred
+ *  at the cursor's page point, so a multi-markup paste keeps its relative
+ *  layout and arrives as one group under the pointer. It targets the page the
+ *  cursor is actually over, which in continuous mode isn't always the page the
+ *  scroll position calls current.
+ *
+ *  Paste in Place keeps the original coordinates instead — the whole point of
+ *  the separate command — and only shifts things when the destination page is
+ *  a different size, to keep the content on the sheet. */
 function pasteMarkups(inPlace: boolean): void {
   const doc = getActiveDoc();
   if (!doc?.clipboard?.length) return;
-  const targetPage = doc.currentPage;
+  const state = getState();
+  const cursor = inPlace ? null : state.cursorPagePoint;
+  // Paste at the cursor goes to the page under it; everything else to the
+  // current page.
+  const targetPage =
+    cursor !== null && state.cursorPageIndex !== null && state.cursorPageIndex < doc.pageCount
+      ? state.cursorPageIndex
+      : doc.currentPage;
   const targetSize = doc.pages[targetPage];
-  const cursor = getState().cursorPagePoint;
-  const copies = doc.clipboard.map((m) => {
-    const copy = cloneMarkup(m, uid(), targetPage);
-    // Snips paste with their lower-left corner at the cursor position
-    if (!inPlace && copy.type === 'snipImage' && cursor) {
-      copy.x = cursor.x;
-      copy.y = cursor.y;
-      return copy;
-    }
-    if (!inPlace && targetSize) {
-      const srcSize = doc.pages[m.pageIndex];
-      if (srcSize && (srcSize.width !== targetSize.width || srcSize.height !== targetSize.height)) {
-        offsetMarkupToCenter(copy, srcSize!, targetSize);
-      }
-    }
-    return copy;
-  });
+  const srcSize = doc.pages[doc.clipboard[0]!.pageIndex];
+
+  let copies = doc.clipboard.map((m) => cloneMarkup(m, uid(), targetPage));
+
+  const bounds = cursor ? unionBounds(copies) : null;
+  if (cursor && bounds) {
+    const dx = cursor.x - (bounds.x + bounds.w / 2);
+    const dy = cursor.y - (bounds.y + bounds.h / 2);
+    copies = copies.map((c) => translateMarkup(c, dx, dy));
+  } else if (
+    srcSize &&
+    targetSize &&
+    (srcSize.width !== targetSize.width || srcSize.height !== targetSize.height)
+  ) {
+    // Nothing to aim at (the pointer has never been over a page), or Paste in
+    // Place onto a differently sized sheet: centre-align rather than let the
+    // content hang off the edge.
+    const dx = (targetSize.width - srcSize.width) / 2;
+    const dy = (targetSize.height - srcSize.height) / 2;
+    copies = copies.map((c) => translateMarkup(c, dx, dy));
+  }
+
   applyMarkupChange('Paste', [...doc.markups, ...copies]);
+  // Leave what was just pasted selected, so it can be dragged or nudged
+  // immediately without hunting for it.
+  selectMarkups(copies.map((c) => c.id));
 }
 
-function offsetMarkupToCenter(
-  m: Markup,
-  _src: { width: number; height: number },
-  tgt: { width: number; height: number },
-): void {
-  const dx = (tgt.width - _src.width) / 2;
-  const dy = (tgt.height - _src.height) / 2;
-  if ('x' in m && typeof m.x === 'number') m.x += dx;
-  if ('y' in m && typeof m.y === 'number') m.y += dy;
-  if ('cx' in m) {
-    m.cx += dx;
-    m.cy += dy;
+/** Bounding box enclosing every markup in the set (page coords). */
+function unionBounds(markups: Markup[]): { x: number; y: number; w: number; h: number } | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const m of markups) {
+    const b = getMarkupBounds(m);
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
   }
-  if ('x1' in m) {
-    m.x1 += dx;
-    m.y1 += dy;
-    m.x2 += dx;
-    m.y2 += dy;
-  }
-  if ('points' in m && m.points) {
-    for (const p of m.points) {
-      p.x += dx;
-      p.y += dy;
-    }
-  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 export function setupKeyboardShortcuts(): void {
@@ -2225,6 +2210,11 @@ export function setupKeyboardShortcuts(): void {
     }
 
     const mod = e.metaKey || e.ctrlKey;
+    // `KeyboardEvent.key` carries the SHIFTED character, so Ctrl+Shift+V
+    // arrives as "V", not "v" — comparing against a lowercase literal silently
+    // never matched, which is what broke Paste in Place and Ctrl+Shift+Z.
+    // Caps Lock had the same effect on every plain shortcut.
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
     // PgUp / PgDn / arrows page through the document like slides (single mode)
     if (!mod) {
@@ -2247,29 +2237,34 @@ export function setupKeyboardShortcuts(): void {
       }
     }
 
-    if (mod && e.key === 's') {
+    if (mod && key === 's') {
       e.preventDefault();
       const doc = getActiveDoc();
       if (doc) void import('../pdf/loader').then(({ saveDocumentInteractive }) => saveDocumentInteractive(doc.id));
     }
-    if (mod && e.key === 'z' && !e.shiftKey) {
+    if (mod && key === 'z' && !e.shiftKey) {
       e.preventDefault();
       handleEditAction('undo');
     }
-    if (mod && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+    if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) {
       e.preventDefault();
       handleEditAction('redo');
     }
-    if (mod && e.key === 'x') {
+    // Clipboard. The app keeps its own markup clipboard rather than the
+    // system one, so these take over the browser's defaults outright.
+    if (mod && key === 'x') {
       e.preventDefault();
       handleEditAction('cut');
     }
-    if (mod && e.key === 'c') handleEditAction('copy');
-    if (mod && e.key === 'v' && e.shiftKey) {
+    if (mod && key === 'c') {
       e.preventDefault();
-      handleEditAction('paste-in-place');
-    } else if (mod && e.key === 'v') handleEditAction('paste');
-    if (mod && e.key === 'd') {
+      handleEditAction('copy');
+    }
+    if (mod && key === 'v') {
+      e.preventDefault();
+      handleEditAction(e.shiftKey ? 'paste-in-place' : 'paste');
+    }
+    if (mod && key === 'd') {
       e.preventDefault();
       handleEditAction('duplicate');
     }
@@ -2289,17 +2284,15 @@ export function setupKeyboardShortcuts(): void {
     };
     // Bare letters pick a tool; Shift+letter is its own binding below, so the
     // plain map must not also fire on the shifted key.
-    if (!mod && !e.shiftKey && toolKeys[e.key.toLowerCase()]) {
-      import('../state/store').then(({ setActiveTool }) => setActiveTool(toolKeys[e.key.toLowerCase()]!));
+    if (!mod && !e.shiftKey && toolKeys[key]) {
+      import('../state/store').then(({ setActiveTool }) => setActiveTool(toolKeys[key]!));
     }
     const shifted: Record<string, ToolId> = {
       // Shift+P is what the ribbon has always advertised for Polygon
       p: 'polygon',
-      // Shift+D: the typed-label sibling of the D (measured) dimension tool
-      d: 'customDimension',
     };
-    if (e.shiftKey && shifted[e.key.toLowerCase()]) {
-      import('../state/store').then(({ setActiveTool }) => setActiveTool(shifted[e.key.toLowerCase()]!));
+    if (e.shiftKey && !mod && shifted[key]) {
+      import('../state/store').then(({ setActiveTool }) => setActiveTool(shifted[key]!));
     }
   });
 }
