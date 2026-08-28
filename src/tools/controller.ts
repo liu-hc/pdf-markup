@@ -9,6 +9,7 @@ import {
   returnToNavTool,
 } from '../state/store';
 import type {
+  AppearanceOverrides,
   CalloutMarkup,
   InkMarkup,
   Markup,
@@ -30,6 +31,19 @@ import type { PageView } from '../view/PageView';
 /** Fat highlighter pen width (page points) and its translucent yellow colour. */
 const HL_PEN_WIDTH = 14;
 const HL_COLOR = '#f5c542';
+
+/** Starting appearance for a new highlight. These are SEEDS: anything the
+ *  user has set on the highlighter tool takes precedence (see
+ *  withToolDefaults). Multiply is on by default — it is what keeps the
+ *  drawing underneath legible at full strength. */
+export const HIGHLIGHT_SEED: AppearanceOverrides = {
+  fillColor: HL_COLOR,
+  fillMultiply: true,
+  fillOpacity: 1,
+  opacity: 1,
+  lineWeight: 0,
+};
+
 /** Fat-marker cursor (hotspot at the nib tip); falls back to crosshair. */
 const MARKER_CURSOR =
   `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'>` +
@@ -880,10 +894,18 @@ function commitInk(pageIndex: number, pts: Point[]): void {
     type: 'inkHighlight',
     pageIndex,
     points: simplified.map((p) => ({ ...p })),
-    penWidth: HL_PEN_WIDTH,
-    overrides: { strokeColor: HL_COLOR, fillMultiply: true, opacity: 1 },
+    // Weight on the armed highlighter means pen width to a free-hand swipe
+    penWidth: getActiveDoc()?.toolDefaults?.highlighter?.penWidth ?? HL_PEN_WIDTH,
   };
-  applyMarkupChange('Highlight', [...docMarkups(), withToolDefaults('highlighter', markup)]);
+  // The highlighter has ONE colour control. It sets fillColor (what the rect
+  // wash paints with), but a swipe is drawn with its stroke — so carry the
+  // chosen colour across, or picking green would still swipe yellow.
+  const hlColor =
+    getActiveDoc()?.toolDefaults?.highlighter?.overrides?.fillColor ?? HL_COLOR;
+  applyMarkupChange('Highlight', [
+    ...docMarkups(),
+    withToolDefaults('highlighter', markup, { ...HIGHLIGHT_SEED, strokeColor: hlColor }),
+  ]);
 }
 
 function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
@@ -896,11 +918,10 @@ function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
     y: r.y,
     width: r.w,
     height: r.h,
-    overrides: { fillColor: HL_COLOR, fillMultiply: true, fillOpacity: 1, lineWeight: 0 },
   }));
   applyMarkupChange('Highlight text', [
     ...docMarkups(),
-    ...markups.map((m) => withToolDefaults('highlighter', m)),
+    ...markups.map((m) => withToolDefaults('highlighter', m, HIGHLIGHT_SEED)),
   ]);
 }
 
@@ -1492,14 +1513,24 @@ async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace
 /** Apply the tool's pre-set properties to a markup as it is created, so what
  *  the user dialled into the properties panel before drawing is what they get.
  *  Anything untouched falls through to the page defaults at render time. */
-export function withToolDefaults<T extends Markup>(tool: ToolId, markup: T): T {
+export function withToolDefaults<T extends Markup>(
+  tool: ToolId,
+  markup: T,
+  seed?: AppearanceOverrides,
+): T {
   const td = getActiveDoc()?.toolDefaults?.[tool];
-  if (!td) return markup;
-  const { overrides, ...fields } = td;
+  const fields = td ? (({ overrides: _o, ...rest }) => rest)(td) : {};
   const merged: T = { ...markup, ...(fields as Partial<T>) };
-  if (overrides && Object.keys(overrides).length) {
-    merged.overrides = { ...overrides, ...markup.overrides };
-  }
+  // Lowest to highest: the tool's built-in seed, then what the user set on
+  // the tool, then anything the markup computed for itself.
+  //
+  // The order matters. The highlighter is the only tool that hands its
+  // markups a starting colour and blend at creation; with the seed merged at
+  // the same level as the markup's own values it beat the panel every time,
+  // which is why setting up a highlight before drawing did nothing while the
+  // shape tools — which create markups with no overrides at all — worked.
+  const overrides = { ...seed, ...td?.overrides, ...markup.overrides };
+  if (Object.keys(overrides).length) merged.overrides = overrides;
   return merged;
 }
 

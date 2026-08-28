@@ -19,7 +19,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
-import { handleEditAction } from '../tools/controller';
+import { handleEditAction, HIGHLIGHT_SEED } from '../tools/controller';
 import { scaleFactorForLabel } from '../util/geometry';
 import { getSnapIndexSync, isSnapLoading } from '../pdf/vectorSnap';
 // User-guide illustrations (shared with the README)
@@ -2160,7 +2160,16 @@ function protoMarkup(tool: string, doc: NonNullable<ReturnType<typeof getActiveD
   if (!type) return null;
   const td = doc.toolDefaults?.[tool] ?? {};
   const { overrides, ...fields } = td;
-  const base = { id: TOOL_PROTO_ID, pageIndex: doc.currentPage, ...fields, overrides };
+  // Start from the tool's own seed so the panel shows the state a markup
+  // would actually be created in — the highlighter seeds Multiply on, and the
+  // panel has to say so before anything is drawn.
+  const seed = tool === 'highlighter' ? HIGHLIGHT_SEED : undefined;
+  const base = {
+    id: TOOL_PROTO_ID,
+    pageIndex: doc.currentPage,
+    ...fields,
+    overrides: { ...seed, ...overrides },
+  };
   switch (type) {
     case 'rectangle':
     case 'highlighter':
@@ -2482,6 +2491,15 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       // The free-hand highlighter's "line weight" IS its pen width
       if (prop === 'lineWeight' && m.type === 'inkHighlight') {
         return write({ penWidth: Number(rawValue) }, 'Edit properties');
+      }
+      // The highlighter tool makes two kinds of markup — a rect wash over text
+      // and a free-hand swipe — so Weight set on the ARMED tool has to reach
+      // both: the rect's border and the swipe's pen width.
+      if (prop === 'lineWeight' && m.id === TOOL_PROTO_ID && m.type === 'highlighter') {
+        return write(
+          { penWidth: Number(rawValue), overrides: { lineWeight: Number(rawValue) } },
+          'Edit properties',
+        );
       }
 
       const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
