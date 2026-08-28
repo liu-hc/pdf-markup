@@ -1,6 +1,7 @@
 import {
   getActiveDoc,
   getState,
+  subscribe,
   selectMarkups,
   uid,
   updateActiveDoc,
@@ -135,11 +136,70 @@ let activeSnap: { pv: PageView; page: Point; kind: SnapKind } | null = null;
 
 /** Kick off (or reuse) the vector index for a page. Extraction is lazy and
  *  cached; until it lands, the tools just behave as they always did. */
+/** Set when a click committed an unsnapped point ONLY because the page's
+ *  geometry had not finished loading. */
+let snapMissedWhileLoading = false;
+
 function primeSnap(pageIndex: number): void {
   const doc = getActiveDoc();
   if (!doc?.pdfDoc) return;
   if (getSnapIndexSync(doc.id, pageIndex)) return;
-  void ensureSnapIndex(doc.id, doc.pdfDoc, pageIndex);
+  void ensureSnapIndex(doc.id, doc.pdfDoc, pageIndex).then(() => resnapInProgress(pageIndex));
+}
+
+/** Pull any still-in-progress points onto the drawing once its geometry has
+ *  finished loading. Only runs when a click actually missed a snap because of
+ *  the wait, so a deliberately unsnapped point (Shift, or snapping switched
+ *  off) is never moved. */
+function resnapInProgress(pageIndex: number): void {
+  if (!snapMissedWhileLoading) return;
+  snapMissedWhileLoading = false;
+  const doc = getActiveDoc();
+  if (!doc) return;
+  const index = getSnapIndexSync(doc.id, pageIndex);
+  if (!index) return;
+  const pull = (pv: PageView, p: Point): Point => {
+    const hit = findSnap(index, p, { radius: SNAP_RADIUS_PX / pv.getScale(), edges: true });
+    return hit ? hit.point : p;
+  };
+  if (draw.pv && draw.pageIndex === pageIndex && draw.points.length) {
+    const view = draw.pv;
+    draw.points = draw.points.map((pt) => pull(view, pt));
+    if (draw.start) draw.start = { ...draw.points[0]! };
+  }
+  if (dimDraw && dimDraw.pageIndex === pageIndex) {
+    dimDraw.p1 = pull(dimDraw.pv, dimDraw.p1);
+    if (dimDraw.p2) dimDraw.p2 = pull(dimDraw.pv, dimDraw.p2);
+  }
+  if (calibDraw && calibDraw.pageIndex === pageIndex) {
+    calibDraw.p1 = pull(calibDraw.pv, calibDraw.p1);
+  }
+}
+
+/** Start reading a page's geometry as soon as it is on screen, rather than
+ *  waiting for the first hover over it.
+ *
+ *  Reading it took the best part of a second on a large sheet, and nothing
+ *  kicked it off until a snap tool was hovered — so the FIRST click on any
+ *  page always landed before the index existed and never snapped, while every
+ *  click after it did. Priming on page/document change closes that window:
+ *  by the time a tool is armed and the cursor is over the drawing, the
+ *  geometry is already there.
+ *
+ *  primeSnap is a Map lookup once the page is loaded, so running this on every
+ *  state change costs nothing. It respects the Markup ▸ Snap to Drawing
+ *  switch: with snapping off, nothing is parsed at all. */
+export function setupSnapPriming(): void {
+  let last = '';
+  subscribe(() => {
+    if (!getState().snapEnabled) return;
+    const doc = getActiveDoc();
+    if (!doc?.pdfDoc) return;
+    const key = `${doc.id}:${doc.currentPage}`;
+    if (key === last) return;
+    last = key;
+    primeSnap(doc.currentPage);
+  });
 }
 
 /** Resolve the cursor to the nearest piece of drawing geometry, or return the
@@ -151,6 +211,11 @@ function snapToVectors(pv: PageView, p: Point): Point {
   if (!doc?.pdfDoc) return p;
   const index = getSnapIndexSync(doc.id, pv.pageIndex);
   if (!index) {
+    // Wanted to snap but the page's geometry is not read yet. Remember that,
+    // so anything placed in the meantime can be pulled onto the drawing once
+    // it arrives — reading a dense sheet can take several seconds, which is
+    // easily long enough for the first click to land first.
+    snapMissedWhileLoading = true;
     primeSnap(pv.pageIndex);
     return p;
   }
@@ -163,6 +228,17 @@ function snapToVectors(pv: PageView, p: Point): Point {
 
 /** Page point for a click on a snapping tool: the snap the hover resolved when
  *  it still matches this cursor position, else a fresh snap of this point. */
+/** The point a click should commit: snapped when the tool snaps, the global
+ *  Snap switch is on, and Shift is not overriding it. Every click site goes
+ *  through here so they cannot drift apart. */
+function clickPoint(pv: PageView, p: Point, tool: ToolId, shift: boolean): Point {
+  if (shift || !usesVectorSnap(tool)) {
+    activeSnap = null;
+    return p;
+  }
+  return snappedClickPoint(pv, p);
+}
+
 function snappedClickPoint(pv: PageView, p: Point): Point {
   if (activeSnap && activeSnap.pv === pv) {
     const px = SNAP_RADIUS_PX / pv.getScale();
@@ -273,7 +349,7 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
   const tool = getState().activeTool;
   const rawDown = pv.screenToPage(e.clientX, e.clientY);
   // Drawing tools start on the drawing's own geometry when one is in range
-  const p = usesVectorSnap(tool) && !e.shiftKey ? snappedClickPoint(pv, rawDown) : rawDown;
+  const p = clickPoint(pv, rawDown, tool, e.shiftKey);
 
   // Middle-button drag pans on EVERY tool. Left-button pans with the Pan tool,
   // or Alt+Left on the Navigate tools (flip/zoom) where it has no other meaning.
@@ -684,7 +760,8 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
     if (!pv) return;
     const raw = pv.screenToPage(e.clientX, e.clientY);
     // Clicks 1 and 2 snap to drawing geometry; click 3 is a free offset pull
-    const pt = dimDraw?.p2 ? raw : snappedClickPoint(pv, raw);
+    // Clicks 1 and 2 snap; click 3 is a free offset pull
+    const pt = dimDraw?.p2 ? raw : clickPoint(pv, raw, tool, e.shiftKey);
     handleDimClick(pv, pt, e, ws);
     return;
   }
@@ -692,7 +769,13 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   // Calibrate: two clicks define the measured span, then prompt for its length
   if (tool === 'calibrate') {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? calibDraw?.pv ?? null;
-    if (pv) handleCalibrateClick(pv, snappedClickPoint(pv, pv.screenToPage(e.clientX, e.clientY)), e);
+    if (pv) {
+      handleCalibrateClick(
+        pv,
+        clickPoint(pv, pv.screenToPage(e.clientX, e.clientY), tool, e.shiftKey),
+        e,
+      );
+    }
     return;
   }
 
@@ -719,10 +802,7 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   }
 
   if (!draw.pv || !draw.start) return;
-  const p =
-    usesVectorSnap(tool) && !e.shiftKey
-      ? snappedClickPoint(draw.pv, draw.pv.screenToPage(e.clientX, e.clientY))
-      : draw.pv.screenToPage(e.clientX, e.clientY);
+  const p = clickPoint(draw.pv, draw.pv.screenToPage(e.clientX, e.clientY), tool, e.shiftKey);
 
   // Two-click tools (rectangle / ellipse / text): place opposite corners
   if (isTwoClickTool(tool)) {

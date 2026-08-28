@@ -2,7 +2,7 @@ import './styles/main.css';
 import { ensureAccess } from './ui/PassGate';
 import { Workspace } from './view/Workspace';
 import { buildAppShell } from './ui/AppShell';
-import { setupKeyboardShortcuts } from './tools/controller';
+import { setupKeyboardShortcuts, setupSnapPriming } from './tools/controller';
 
 // The passcode gate resolves before any of the app UI is built
 await ensureAccess();
@@ -19,3 +19,4 @@ workspace.mount(primaryPane);
 
 app.appendChild(shell);
 setupKeyboardShortcuts();
+setupSnapPriming();
