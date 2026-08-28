@@ -463,7 +463,7 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
       replaceMarkups(
         docMarkups().map((mk) => {
           const orig = originals.get(mk.id);
-          return orig ? translateMarkup(orig, dx, dy) : mk;
+          return orig ? dragMarkup(orig, dx, dy) : mk;
         }),
       );
     } else {
@@ -880,7 +880,7 @@ function commitInk(pageIndex: number, pts: Point[]): void {
     pageIndex,
     points: simplified.map((p) => ({ ...p })),
     penWidth: HL_PEN_WIDTH,
-    overrides: { strokeColor: HL_COLOR, opacity: 0.35 },
+    overrides: { strokeColor: HL_COLOR, fillMultiply: true, opacity: 1 },
   };
   applyMarkupChange('Highlight', [...docMarkups(), markup]);
 }
@@ -895,7 +895,7 @@ function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
     y: r.y,
     width: r.w,
     height: r.h,
-    overrides: { fillColor: HL_COLOR, opacity: 0.35 },
+    overrides: { fillColor: HL_COLOR, fillMultiply: true, fillOpacity: 1, lineWeight: 0 },
   }));
   applyMarkupChange('Highlight text', [...docMarkups(), ...markups]);
 }
@@ -1541,6 +1541,24 @@ function applyRotate(m: Markup, start: Point, cur: Point, shift: boolean): Marku
   return { ...m, rotation: rot };
 }
 
+/** Move a markup as a DRAG does. Identical to translateMarkup except for the
+ *  callout, whose arrow tip is pinned: dragging the text box moves the box and
+ *  the flat leader run next to it, while the anchor stays on whatever it was
+ *  pointing at and the diagonal re-aims itself. (The anchor has its own handle
+ *  for when the tip really should move.) Paste, duplicate and nudge still use
+ *  translateMarkup, which moves the whole markup together. */
+function dragMarkup(m: Markup, dx: number, dy: number): Markup {
+  if (m.type !== 'callout') return translateMarkup(m, dx, dy);
+  return {
+    ...m,
+    textX: m.textX + dx,
+    textY: m.textY + dy,
+    // The elbow travels with the box so the flat run keeps its length
+    kinkX: m.kinkX !== undefined ? m.kinkX + dx : undefined,
+    kinkY: m.kinkY !== undefined ? m.kinkY + dy : undefined,
+  };
+}
+
 function translateMarkup(m: Markup, dx: number, dy: number): Markup {
   switch (m.type) {
     case 'rectangle':
@@ -2120,46 +2138,35 @@ export function handleEditAction(action: string): void {
   }
 }
 
+/** Offset a plain Paste applies to the original position — up and to the
+ *  right, so the copy sits clear of the original instead of hiding it. */
+const PASTE_OFFSET = 25;
+
 /** Paste the clipboard onto the page.
  *
- *  Plain Paste lands ON THE CURSOR: the pasted set's bounding box is centred
- *  at the cursor's page point, so a multi-markup paste keeps its relative
- *  layout and arrives as one group under the pointer. It targets the page the
- *  cursor is actually over, which in continuous mode isn't always the page the
- *  scroll position calls current.
- *
- *  Paste in Place keeps the original coordinates instead — the whole point of
- *  the separate command — and only shifts things when the destination page is
- *  a different size, to keep the content on the sheet. */
+ *  Plain Paste keeps the original coordinates and nudges the copy
+ *  PASTE_OFFSET points toward the upper right (page space is y-up, so both
+ *  deltas are positive). Paste in Place keeps the original coordinates
+ *  exactly, and only shifts things when the destination page is a different
+ *  size, to keep the content on the sheet. */
 function pasteMarkups(inPlace: boolean): void {
   const doc = getActiveDoc();
   if (!doc?.clipboard?.length) return;
-  const state = getState();
-  const cursor = inPlace ? null : state.cursorPagePoint;
-  // Paste at the cursor goes to the page under it; everything else to the
-  // current page.
-  const targetPage =
-    cursor !== null && state.cursorPageIndex !== null && state.cursorPageIndex < doc.pageCount
-      ? state.cursorPageIndex
-      : doc.currentPage;
+  const targetPage = doc.currentPage;
   const targetSize = doc.pages[targetPage];
   const srcSize = doc.pages[doc.clipboard[0]!.pageIndex];
 
   let copies = doc.clipboard.map((m) => cloneMarkup(m, uid(), targetPage));
 
-  const bounds = cursor ? unionBounds(copies) : null;
-  if (cursor && bounds) {
-    const dx = cursor.x - (bounds.x + bounds.w / 2);
-    const dy = cursor.y - (bounds.y + bounds.h / 2);
-    copies = copies.map((c) => translateMarkup(c, dx, dy));
+  if (!inPlace) {
+    copies = copies.map((c) => translateMarkup(c, PASTE_OFFSET, PASTE_OFFSET));
   } else if (
     srcSize &&
     targetSize &&
     (srcSize.width !== targetSize.width || srcSize.height !== targetSize.height)
   ) {
-    // Nothing to aim at (the pointer has never been over a page), or Paste in
-    // Place onto a differently sized sheet: centre-align rather than let the
-    // content hang off the edge.
+    // Paste in Place onto a differently sized sheet: centre-align rather than
+    // let the content hang off the edge.
     const dx = (targetSize.width - srcSize.width) / 2;
     const dy = (targetSize.height - srcSize.height) / 2;
     copies = copies.map((c) => translateMarkup(c, dx, dy));
@@ -2169,23 +2176,6 @@ function pasteMarkups(inPlace: boolean): void {
   // Leave what was just pasted selected, so it can be dragged or nudged
   // immediately without hunting for it.
   selectMarkups(copies.map((c) => c.id));
-}
-
-/** Bounding box enclosing every markup in the set (page coords). */
-function unionBounds(markups: Markup[]): { x: number; y: number; w: number; h: number } | null {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const m of markups) {
-    const b = getMarkupBounds(m);
-    minX = Math.min(minX, b.x);
-    minY = Math.min(minY, b.y);
-    maxX = Math.max(maxX, b.x + b.w);
-    maxY = Math.max(maxY, b.y + b.h);
-  }
-  if (!Number.isFinite(minX)) return null;
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
 export function setupKeyboardShortcuts(): void {

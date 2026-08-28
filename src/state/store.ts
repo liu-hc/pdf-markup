@@ -10,7 +10,6 @@ let state: AppState = {
   lastNavTool: 'select',
   selectedMarkupIds: [],
   cursorPagePoint: null,
-  cursorPageIndex: null,
   leftPanelVisible: true,
   rightPanelVisible: true,
   leftPanelWidth: 220,
@@ -110,8 +109,8 @@ export function selectMarkups(ids: string[]): void {
   });
 }
 
-export function setCursorPagePoint(p: Point | null, pageIndex: number | null = null): void {
-  setState({ cursorPagePoint: p, cursorPageIndex: p ? pageIndex : null });
+export function setCursorPagePoint(p: Point | null): void {
+  setState({ cursorPagePoint: p });
 }
 
 export function addMarkup(markup: Markup, markDirty = true): void {

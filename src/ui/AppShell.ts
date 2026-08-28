@@ -73,7 +73,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   root.className = 'app-shell';
   root.innerHTML = `
     <header class="menubar">
-      <div class="app-mark"><img src="/corgi.png" alt="Markup Studio" width="26" height="26"></div>
+      <div class="app-mark"><img src="/corgi.png" alt="ShakeButtPDF" width="26" height="26"></div>
       <nav class="menu-nav">
         <div class="menu-item" data-menu="file">File<ul class="dropdown">
           <li data-action="new">New…</li>
@@ -540,10 +540,10 @@ function showHelpDialog(): void {
     `<figure class="help-fig"><img src="${src}" alt="${alt}"></figure>`;
 
   const body = `
-    <p class="help-intro">Markup Studio is a browser PDF viewer &amp; markup tool for architectural and engineering drawings. Open or create a PDF, pick a tool from the glass ribbon, and draw on the sheet — then File ▸ Save writes the markups back into the PDF. Everything runs locally: your drawings never leave your machine.</p>
+    <p class="help-intro">ShakeButtPDF is a browser PDF viewer &amp; markup tool for architectural and engineering drawings. Open or create a PDF, pick a tool from the glass ribbon, and draw on the sheet — then File ▸ Save writes the markups back into the PDF. Everything runs locally: your drawings never leave your machine.</p>
 
     <div class="help-section"><h4>The workspace</h4>
-      ${fig(guideWorkspace, 'The Markup Studio workspace')}
+      ${fig(guideWorkspace, 'The ShakeButtPDF workspace')}
       <ol class="help-legend">
         <li><strong>Menu bar</strong> — File / Edit / View / Markup / Help, document tabs (the highlighted tab with the green dot is the current file), Save</li>
         <li><strong>Canvas</strong> — the sheet fills the window and scrolls under the glass chrome</li>
@@ -1869,7 +1869,9 @@ function renderRightPanel(root: HTMLElement): void {
     // one, else the description/id) abbreviated to "ab…yz" on the right
     const name = document.createElement('span');
     name.className = 'mk-name';
-    name.textContent = m.type;
+    // A user-given name replaces the type here — that's the point of naming
+    name.textContent = m.name ?? m.type;
+    if (m.name) name.title = `${m.name} (${m.type})`;
     const idSpan = document.createElement('span');
     idSpan.className = 'mk-id';
     // Right-hand info: the measurement value for measure markups, the text
@@ -2064,7 +2066,16 @@ const TEXT_BEARING_TYPES = [
 ];
 
 /** Markups that enclose an area → get an infill color control. */
-const FILL_BEARING_TYPES = ['rectangle', 'ellipse', 'polygon', 'cloud', 'text', 'callout'];
+const FILL_BEARING_TYPES = [
+  'rectangle',
+  'ellipse',
+  'polygon',
+  'cloud',
+  'text',
+  'callout',
+  // The highlight wash is an infill: colour, opacity and Multiply all apply
+  'highlighter',
+];
 
 /** Markups that get start/end arrow controls. */
 const ARROW_BEARING_TYPES = ['line', 'polyline', 'callout'];
@@ -2134,7 +2145,10 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   if (!m) return '';
   const defaults = doc.pageDefaults[m.pageIndex];
   const stroke = m.overrides?.strokeColor ?? defaults?.strokeColor ?? DEFAULT_COLOR;
-  const weight = m.overrides?.lineWeight ?? defaults?.lineWeight ?? 1;
+  const weight =
+    m.type === 'inkHighlight'
+      ? m.penWidth
+      : m.overrides?.lineWeight ?? defaults?.lineWeight ?? 1;
   const lineStyle = m.overrides?.lineStyle ?? defaults?.lineStyle ?? 'solid';
   const opacity = m.overrides?.opacity ?? 1;
   const styleOptions = (['solid', 'dashed', 'dotted', 'centerline'] as const)
@@ -2147,6 +2161,18 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   const lineOpacityRow = `
     <label class="opacity-row">Line opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>`;
 
+  // A highlight's colour lives in the infill well, so call it what it is
+  const fillLabel = m.type === 'highlighter' ? 'Color' : 'Infill';
+
+  // Ink swipe: no infill of its own — its stroke is the wash — so it gets a
+  // Multiply toggle of its own alongside the Line colour and Weight above.
+  const inkSection =
+    m.type === 'inkHighlight'
+      ? `<label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${
+          m.overrides?.fillMultiply ? 'checked' : ''
+        } title="Blend the highlight with the drawing beneath instead of covering it"></label>`
+      : '';
+
   // Infill control (rectangle/ellipse/polygon/text/callout/area). The infill
   // carries its OWN opacity and an optional Multiply blend, both independent
   // of the linework opacity.
@@ -2158,7 +2184,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     const fillOpacity = m.overrides?.fillOpacity ?? opacity;
     const multiply = m.overrides?.fillMultiply ?? false;
     fillSection = `
-    <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
+    <label>${fillLabel} <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
     <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>${lineOpacityRow}
     <label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${multiply ? 'checked' : ''} title="Blend the infill with the drawing beneath instead of covering it"></label>`;
   }
@@ -2225,6 +2251,14 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   if (m.type === 'polyline') {
     const on = m.showLength ?? false;
     measureToggle = `<hr><label>Total length <input type="checkbox" data-flag="showLength" ${on ? 'checked' : ''}></label>`;
+  } else if (m.type === 'rectangle') {
+    const on = m.showArea ?? false;
+    const decimals = m.decimals ?? 2;
+    measureToggle =
+      `<hr><label>Show area <input type="checkbox" data-flag="showArea" ${on ? 'checked' : ''}></label>` +
+      (on
+        ? `<label>Decimals <select data-prop="decimals">${AREA_DECIMAL_OPTIONS.map((n) => `<option value="${n}" ${n === decimals ? 'selected' : ''}>${n}</option>`).join('')}</select></label>`
+        : '');
   } else if (m.type === 'polygon') {
     const on = m.showArea ?? false;
     const decimals = m.decimals ?? 2;
@@ -2268,7 +2302,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   return `<div class="prop-block">
     <div class="prop-head">
       <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
-      <div class="prop-head-text"><strong>${m.type}</strong><p>Page ${m.pageIndex + 1}</p></div>
+      <input type="text" class="prop-name" data-prop="name" value="${escapeAttr(m.name ?? '')}" placeholder="${escapeAttr(m.type)}" title="Name this markup — the name replaces the type in the Markups list. Clear it to go back to the type." spellcheck="false">
     </div>
     <div class="prop-section-label">Appearance</div>
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
@@ -2277,6 +2311,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label>Style <select data-prop="lineStyle">${styleOptions}</select></label>
     ${rotationSection}
     ${fillSection ? '' : lineOpacityRow}
+    ${inkSection}
     ${arrowSection}
     ${textSection}
     ${measureToggle}
@@ -2287,6 +2322,20 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
 /** Attach change handlers for the data-prop inputs of the selected markup. */
 function wireProperties(props: HTMLElement, selectedId: string | undefined): void {
   if (!selectedId) return;
+  // The name field commits on every keystroke; renderRightPanel hands focus
+  // and caret back afterwards, so typing is uninterrupted.
+  props.querySelector<HTMLInputElement>('.prop-name')?.addEventListener('input', (e) => {
+    const doc = getActiveDoc();
+    if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
+    const trimmed = (e.target as HTMLInputElement).value.trim();
+    applyMarkupChange(
+      'Rename markup',
+      doc.markups.map((mk) =>
+        mk.id === selectedId ? { ...mk, name: trimmed === '' ? undefined : trimmed } : mk,
+      ),
+    );
+  });
+
   props.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-prop]').forEach((input) => {
     input.addEventListener('change', () => {
       const doc = getActiveDoc();
@@ -2321,8 +2370,18 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         if (prop === 'customLabel' && mk.type === 'dimension') {
           return { ...mk, customLabel: rawValue };
         }
-        if (prop === 'decimals' && mk.type === 'polygon') {
+        if (prop === 'decimals' && (mk.type === 'polygon' || mk.type === 'rectangle')) {
           return { ...mk, decimals: Number(rawValue) };
+        }
+        // Custom name lives on the markup, not in `overrides`. Blank clears it
+        // so the list falls back to showing the markup type.
+        if (prop === 'name') {
+          const trimmed = rawValue.trim();
+          return { ...mk, name: trimmed === '' ? undefined : trimmed };
+        }
+        // The highlighter's "line weight" IS its pen width
+        if (prop === 'lineWeight' && mk.type === 'inkHighlight') {
+          return { ...mk, penWidth: Number(rawValue) };
         }
         if (prop === 'rotation' && (mk.type === 'rectangle' || mk.type === 'ellipse')) {
           return { ...mk, rotation: Number(rawValue) || 0 };

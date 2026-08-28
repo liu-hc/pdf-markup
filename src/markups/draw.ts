@@ -50,6 +50,9 @@ export interface DrawStyle {
 /** One indent step in page points. */
 export const INDENT_STEP = 12;
 
+/** Fallback highlighter colour, shared with the tool that creates them. */
+export const HIGHLIGHT_COLOR = '#f5c542';
+
 export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle {
   return {
     stroke: markup.overrides?.strokeColor ?? defaults.strokeColor,
@@ -148,6 +151,20 @@ export function drawMarkupOnCanvas(
       if (style.fill) paintFill(() => ctx.fillRect(-w / 2, -h / 2, w, h));
       if (!multiplyPass) ctx.strokeRect(-w / 2, -h / 2, w, h);
       ctx.restore();
+      // Optional enclosed area, centred like the polygon's
+      if (!multiplyPass && markup.showArea) {
+        const c = toScreen({ x: markup.x + markup.width / 2, y: markup.y + markup.height / 2 });
+        drawCenteredLabel(
+          ctx,
+          c.x,
+          c.y,
+          formatArea(markup.width * markup.height, defaults.scaleFactor, markup.decimals),
+          style.textColor,
+          scale,
+          style.fontSize,
+          style.fontFamily,
+        );
+      }
       break;
     }
     case 'highlighter': {
@@ -162,6 +179,10 @@ export function drawMarkupOnCanvas(
       // Fat translucent marker swipe with a round pen — opacity + colour come
       // from the markup's overrides (yellow @ 0.35) set on the global above.
       if (!markup.points.length) break;
+      // The swipe IS the wash, so it follows the fill pass rather than the
+      // linework pass — that's what lets Multiply darken the PDF beneath it.
+      if (!fillPass) break;
+      ctx.globalAlpha = style.fillOpacity;
       ctx.lineWidth = markup.penWidth * scale;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';

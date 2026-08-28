@@ -35,8 +35,8 @@ export function ensureAccess(): Promise<void> {
     gate.className = 'pass-gate';
     gate.innerHTML = `
       <div class="pass-card">
-        <div class="pass-mark"><svg width="22" height="22" viewBox="0 0 20 20" fill="none"><rect x="2" y="1.5" width="10" height="13" rx="1.2" stroke="rgba(255,255,255,0.55)" stroke-width="1.3"/><rect x="8" y="5.5" width="10" height="13" rx="1.2" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.85)" stroke-width="1.3"/><path d="M10 13.5l4.5-4.5 1.5 1.5-4.5 4.5L10 16z" fill="#fff"/></svg></div>
-        <h1>Markup Studio</h1>
+        <div class="pass-mark"><img src="/corgi.png" alt="" width="72" height="72"></div>
+        <h1>ShakeButtPDF</h1>
         <p class="pass-hint">Enter the passcode to continue</p>
         <form class="pass-form">
           <input type="password" class="pass-input" placeholder="Passcode" autocomplete="current-password" autofocus spellcheck="false">

@@ -90,6 +90,10 @@ export interface MarkupBase {
   type: MarkupType;
   pageIndex: number;
   description?: string;
+  /** User-given name, typed into the properties-panel header. When set it
+   *  replaces the markup TYPE everywhere the markup is named — the panel
+   *  header and the markups list. Unset = show the type. */
+  name?: string;
   /** Locked = reversibly "flattened": still drawn in its draw-order slot but
    *  not selectable/editable until unlocked (markups-list padlock or
    *  Markup ▸ Unlock). */
@@ -110,6 +114,10 @@ export interface RectMarkup extends MarkupBase {
   height: number;
   /** Rotation in degrees (clockwise on screen) about the shape's center. */
   rotation?: number;
+  /** rectangle only: show the enclosed area at the centre when true. */
+  showArea?: boolean;
+  /** rectangle only: decimal places for the area value (default 2). */
+  decimals?: number;
 }
 
 export interface EllipseMarkup extends MarkupBase {
@@ -272,10 +280,6 @@ export interface AppState {
   lastNavTool: 'select' | 'zoom';
   selectedMarkupIds: string[];
   cursorPagePoint: Point | null;
-  /** Page the cursor is over. In continuous mode that isn't always
-   *  `currentPage` (which follows the scroll position), and Paste needs the
-   *  page actually under the pointer. */
-  cursorPageIndex: number | null;
   leftPanelVisible: boolean;
   rightPanelVisible: boolean;
   leftPanelWidth: number;

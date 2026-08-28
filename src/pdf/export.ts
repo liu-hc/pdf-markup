@@ -2,7 +2,7 @@ import { PDFDocument, rgb, StandardFonts, BlendMode, LineCapStyle, degrees } fro
 import type { PDFFont, Color } from 'pdf-lib';
 import type { ArrowHead, PdfDocumentState, Markup, PageDefaults, Point } from '../state/types';
 import { META_KEY } from './importMarkups';
-import { resolveStyle } from '../markups/draw';
+import { HIGHLIGHT_COLOR, resolveStyle } from '../markups/draw';
 import {
   angleDegrees,
   arrowBarbs,
@@ -44,6 +44,7 @@ interface StrokeOpts {
   opacity: number;
   dash?: number[];
   cap?: LineCapStyle;
+  multiply?: boolean;
 }
 
 function strokePath(page: PdfPage, d: string, o: StrokeOpts): void {
@@ -55,6 +56,7 @@ function strokePath(page: PdfPage, d: string, o: StrokeOpts): void {
     borderOpacity: o.opacity,
     ...(o.dash && o.dash.length ? { borderDashArray: o.dash } : {}),
     ...(o.cap !== undefined ? { borderLineCap: o.cap } : {}),
+    ...(o.multiply ? { blendMode: BlendMode.Multiply } : {}),
   });
 }
 
@@ -350,16 +352,25 @@ async function embedMarkup(
       );
       const d = pathOf(corners, true);
       if (markup.type === 'highlighter') {
-        // Borderless translucent swipe — its own fixed alpha, like on screen
         fillPath(page, d, {
-          color: parseColor(style.fill ?? '#f5c542'),
-          opacity: 0.35,
+          color: parseColor(style.fill ?? HIGHLIGHT_COLOR),
+          opacity: fillOpacity,
           multiply,
         });
+        // Borderless unless the user dialled in a line weight
+        if (lineWeight > 0) line(corners, true);
         break;
       }
       fill(d);
       line(corners, true);
+      // Optional enclosed area, matching the canvas
+      if (markup.showArea) {
+        label(
+          formatArea(markup.width * markup.height, defaults.scaleFactor, markup.decimals),
+          markup.x + markup.width / 2,
+          markup.y + markup.height / 2,
+        );
+      }
       break;
     }
 
@@ -527,6 +538,7 @@ async function embedMarkup(
         width: markup.penWidth,
         opacity: lineOpacity,
         cap: LineCapStyle.Round,
+        multiply,
       });
       break;
     }

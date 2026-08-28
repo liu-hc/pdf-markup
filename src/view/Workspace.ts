@@ -82,11 +82,13 @@ export class Workspace {
     this.el.addEventListener('drop', async (e) => {
       e.preventDefault();
       this.el.classList.remove('drag-over');
-      const file = e.dataTransfer?.files[0];
-      if (file?.type === 'application/pdf') {
-        const { loadPdfFromFile } = await import('../pdf/loader');
-        await loadPdfFromFile(file, null);
-      }
+      // Route through openDroppedFile so images (JPEG/PNG/TIFF) work here
+      // too — dropping one on the empty-state corgi used to do nothing,
+      // because this handler only ever accepted application/pdf.
+      const files = e.dataTransfer?.files;
+      if (!files?.length) return;
+      const { openDroppedFile } = await import('../pdf/loader');
+      for (const f of Array.from(files)) await openDroppedFile(f);
     });
   }
 
@@ -706,6 +708,6 @@ export class Workspace {
 
   updateCursorFromEvent(e: PointerEvent, pv: PageView): void {
     const p = pv.screenToPage(e.clientX, e.clientY);
-    setCursorPagePoint(p, pv.pageIndex);
+    setCursorPagePoint(p);
   }
 }
