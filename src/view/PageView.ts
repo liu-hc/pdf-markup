@@ -532,8 +532,8 @@ export class PageView {
 
   /** Snap indicator at a page point — appended to (never clearing) whatever
    *  preview is already on the SVG layer. A square marks a vertex/corner, a
-   *  triangle a segment midpoint, a circle a point along an edge. */
-  drawSnapMarker(p: Point, kind: 'vertex' | 'midpoint' | 'edge'): void {
+   *  circle a point along an edge. */
+  drawSnapMarker(p: Point, kind: 'vertex' | 'edge'): void {
     const ns = 'http://www.w3.org/2000/svg';
     const cx = p.x * this.scale;
     const cy = (this.pageHeight - p.y) * this.scale;
@@ -545,12 +545,6 @@ export class PageView {
       el.setAttribute('y', String(cy - r));
       el.setAttribute('width', String(r * 2));
       el.setAttribute('height', String(r * 2));
-    } else if (kind === 'midpoint') {
-      el = document.createElementNS(ns, 'polygon');
-      el.setAttribute(
-        'points',
-        `${cx},${cy - r} ${cx + r},${cy + r * 0.7} ${cx - r},${cy + r * 0.7}`,
-      );
     } else {
       el = document.createElementNS(ns, 'circle');
       el.setAttribute('cx', String(cx));

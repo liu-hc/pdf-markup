@@ -8,7 +8,7 @@ import {
   closeDocument,
   uid,
 } from '../state/store';
-import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot } from '../state/types';
+import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot, ToolDefaults } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 // Static, deliberately: a property edit must land in the same tick as the
 // click. Behind a dynamic import it didn't, and any re-render in the gap
@@ -16,7 +16,7 @@ import { applyPageOrder } from '../markups/order';
 // what made the polygon "Show area" tick box flick itself back off.
 import { applyMarkupChange, clearHistory } from '../state/undo';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
+import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction } from '../tools/controller';
@@ -105,6 +105,8 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
           <li data-action="split-none">Close Split</li>
         </ul></div>
         <div class="menu-item" data-menu="markup">Markup<ul class="dropdown">
+          <li data-action="toggle-snap">Snap to Drawing<span class="menu-key menu-check"></span></li>
+          <li class="sep"></li>
           <li data-action="lock-page">Lock All on Current Page</li>
           <li data-action="lock-file">Lock All in Current File</li>
           <li class="sep"></li>
@@ -263,6 +265,9 @@ function wireMenus(root: HTMLElement, ws: Workspace): void {
           break;
         case 'help':
           showHelpDialog();
+          break;
+        case 'toggle-snap':
+          setState({ snapEnabled: !getState().snapEnabled });
           break;
         case 'open':
           await openFilePicker();
@@ -596,7 +601,7 @@ function showHelpDialog(): void {
         <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
         <li><strong>Override dimension</strong> — tick it in a selected dimension's properties to type the value yourself instead of measuring it off the page scale. The box opens seeded with what the scale currently reads; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a detail the drawing isn't to scale for). Clear the value for a dimension line with no text; untick the box to hand it back to the scale.</li>
         <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
-        <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, the measure tools <em>and every shape tool</em> (rectangle, ellipse, polygon, line, polyline) pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), then a segment <em>midpoint</em> (triangle), then the nearest point <em>along</em> a line or curve (circle). The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. Hold <strong>Shift</strong> to ignore snapping and take the ortho lock instead; a dimension's third (offset) click never snaps.</li>
+        <li><strong>Vector snapping</strong> — on a vector (CAD) PDF, the measure tools <em>and every shape tool</em> (rectangle, ellipse, polygon, line, polyline) pull the cursor onto the drawing's own geometry when it comes within ~12px: a line or curve <em>endpoint</em> or shape <em>corner</em> first (green square), else the nearest point <em>along</em> a line or curve (circle). Segment midpoints are deliberately not offered — on dense linework they pull the cursor to places nothing is drawn. The page's geometry is read once on first use — the status bar shows <code>Snap: reading drawing…</code> until it's ready. Hold <strong>Shift</strong> to ignore snapping and take the ortho lock instead; a dimension's third (offset) click never snaps. Turn it off altogether with <strong>Markup ▸ Snap to Drawing</strong>.</li>
         <li>Per-page <strong>Totals</strong> (linear, polyline, area) accumulate in the inspector.</li>
       </ul>
     </div>
@@ -655,9 +660,9 @@ function wireRibbon(root: HTMLElement): void {
     {
       label: 'Navigate',
       tools: [
+        { id: 'zoom', label: 'Zoom Page', key: 'Z' },
         { id: 'flip', label: 'Flip', key: 'F' },
         { id: 'pan', label: 'Pan', key: 'H' },
-        { id: 'zoom', label: 'Zoom Page', key: 'Z' },
         { id: 'select', label: 'Select' },
       ],
     },
@@ -1475,6 +1480,10 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     if (overlayOn) renderOverlayBar(root);
   }
 
+  // Snap toggle tick — independent of whether a document is open
+  const snapCheck = root.querySelector('.menu-check');
+  if (snapCheck) snapCheck.textContent = state.snapEnabled ? '\u2713' : '';
+
   if (doc) {
     const defaults = doc.pageDefaults[doc.currentPage];
     root.querySelector('.hud-scale')!.textContent = `Scale: ${defaults?.scaleLabel ?? 'None'}`;
@@ -1522,9 +1531,15 @@ function renderDocTabs(root: HTMLElement): void {
     tab.addEventListener('click', () => setState({ activeDocId: doc.id }));
     const close = document.createElement('span');
     close.className = 'tab-close';
-    close.textContent = '×';
+    close.textContent = '\u00d7';
+    close.title = `Close ${doc.filename}`;
+    close.setAttribute('role', 'button');
+    // pointerdown too: the tab's own click would otherwise switch documents
+    // first, so closing a background tab looked like it opened it
+    close.addEventListener('pointerdown', (e) => e.stopPropagation());
     close.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();
       void requestCloseDocument(doc.id);
     });
     tab.appendChild(close);
@@ -1809,6 +1824,11 @@ function showInsertPageDialog(docId: string, pageIndex: number): void {
   overlay.querySelector('.np-after')?.addEventListener('click', () => void doInsert(pageIndex + 1));
 }
 
+/** Selection the properties panel was last built for. A change forces a
+ *  rebuild even mid-typing, because the panel would otherwise describe the
+ *  wrong markup. */
+let _propsSelectionKey = '\u0000';
+
 function renderRightPanel(root: HTMLElement): void {
   const doc = getActiveDoc();
   const state = getState();
@@ -1817,33 +1837,25 @@ function renderRightPanel(root: HTMLElement): void {
   const list = root.querySelector('.markups-list ul')!;
 
   // The panel is rebuilt wholesale on EVERY state change — cursor moves over
-  // the canvas included — so a field being typed into has to be handed back
-  // its focus, text and caret afterwards, or it can never be filled in.
-  const focused = document.activeElement as HTMLInputElement | null;
-  const typing =
-    focused && props.contains(focused) && focused.tagName === 'INPUT' && focused.dataset.prop
-      ? {
-          prop: focused.dataset.prop,
-          value: focused.value,
-          start: focused.selectionStart,
-          end: focused.selectionEnd,
-        }
-      : null;
+  // the canvas included. Rebuilding it while a text field inside it has focus
+  // destroys the element mid-keystroke: the caret is lost, the rest of the
+  // word goes to the document, and single letters land on the tool shortcuts.
+  // So while the user is typing in the panel, leave the panel alone. Nothing
+  // is missed by doing so — the panel already shows what they are typing, and
+  // it rebuilds as soon as they click away or the selection changes.
+  const focused = document.activeElement as HTMLElement | null;
+  const typingHere =
+    !!focused &&
+    props.contains(focused) &&
+    (focused.tagName === 'TEXTAREA' ||
+      (focused.tagName === 'INPUT' &&
+        ['text', 'number', 'search'].includes((focused as HTMLInputElement).type)));
+  const selectionKey = state.selectedMarkupIds.join(',');
 
-  props.innerHTML = renderProperties(doc, state.selectedMarkupIds);
-  wireProperties(props as HTMLElement, state.selectedMarkupIds[0]);
-
-  if (typing) {
-    const el = props.querySelector<HTMLInputElement>(`input[data-prop="${typing.prop}"]`);
-    if (el) {
-      el.value = typing.value;
-      el.focus();
-      try {
-        el.setSelectionRange(typing.start, typing.end);
-      } catch {
-        /* selection ranges aren't supported on every input type */
-      }
-    }
+  if (!(typingHere && selectionKey === _propsSelectionKey)) {
+    _propsSelectionKey = selectionKey;
+    props.innerHTML = renderProperties(doc, state.selectedMarkupIds);
+    wireProperties(props as HTMLElement, state.selectedMarkupIds[0]);
   }
   // Totals always live at the bottom of the panel (above the Markups list)
   totalsBlock.innerHTML = renderTotals(doc, state.selectedMarkupIds[0]);
@@ -2139,10 +2151,62 @@ function openSwatchPopup(anchor: HTMLElement, current: string, onPick: (color: s
   setTimeout(() => document.addEventListener('pointerdown', onSwatchDocDown, true), 0);
 }
 
+/** A stand-in markup representing what the armed tool is about to draw, with
+ *  that tool's saved defaults applied. It never reaches the document — it only
+ *  gives renderProperties a subject, so the panel can offer the same controls
+ *  before the first click as it does after. */
+function protoMarkup(tool: string, doc: NonNullable<ReturnType<typeof getActiveDoc>>): Markup | null {
+  const type = TOOL_MARKUP_TYPE[tool];
+  if (!type) return null;
+  const td = doc.toolDefaults?.[tool] ?? {};
+  const { overrides, ...fields } = td;
+  const base = { id: TOOL_PROTO_ID, pageIndex: doc.currentPage, ...fields, overrides };
+  switch (type) {
+    case 'rectangle':
+    case 'highlighter':
+      return { ...base, type, x: 0, y: 0, width: 0, height: 0 } as Markup;
+    case 'ellipse':
+      return { ...base, type, cx: 0, cy: 0, rx: 0, ry: 0 } as Markup;
+    case 'polygon':
+    case 'polyline':
+      return { ...base, type, points: [] } as Markup;
+    case 'line':
+    case 'dimension':
+      return { ...base, type, x1: 0, y1: 0, x2: 0, y2: 0 } as Markup;
+    case 'text':
+      return { ...base, type, x: 0, y: 0, width: 0, height: 0, content: '' } as Markup;
+    case 'callout':
+      return {
+        ...base, type, textX: 0, textY: 0, textWidth: 0, textHeight: 0,
+        anchorX: 0, anchorY: 0, content: '',
+      } as Markup;
+    case 'measureAngle':
+      return {
+        ...base, type,
+        p1: { x: 0, y: 0 }, vertex: { x: 0, y: 0 }, p2: { x: 0, y: 0 },
+      } as Markup;
+    default:
+      return null;
+  }
+}
+
+/** Sentinel id for the armed-tool prototype — never a real markup. */
+const TOOL_PROTO_ID = '__tool_defaults__';
+
 function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string[]): string {
-  if (!doc || !selected.length) return '<p class="muted">Select a markup to edit properties.</p>';
-  const m = doc.markups.find((mk) => mk.id === selected[0]);
-  if (!m) return '';
+  if (!doc) return '<p class="muted">Open a document to edit properties.</p>';
+  // Nothing selected: if a drawing tool is armed, offer ITS properties so they
+  // can be set before anything is drawn.
+  const armedTool = selected.length ? null : getState().activeTool;
+  const m = selected.length
+    ? doc.markups.find((mk) => mk.id === selected[0])
+    : armedTool
+      ? protoMarkup(armedTool, doc)
+      : null;
+  if (!m) {
+    return '<p class="muted">Select a markup, or pick a drawing tool to set up what you draw next.</p>';
+  }
+  const isProto = m.id === TOOL_PROTO_ID;
   const defaults = doc.pageDefaults[m.pageIndex];
   const stroke = m.overrides?.strokeColor ?? defaults?.strokeColor ?? DEFAULT_COLOR;
   const weight =
@@ -2302,7 +2366,9 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   return `<div class="prop-block">
     <div class="prop-head">
       <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
-      <input type="text" class="prop-name" data-prop="name" value="${escapeAttr(m.name ?? '')}" placeholder="${escapeAttr(m.type)}" title="Name this markup — the name replaces the type in the Markups list. Clear it to go back to the type." spellcheck="false">
+      ${isProto
+        ? `<span class="prop-head-tool">${escapeAttr(m.type)}<em>settings for the next one</em></span>`
+        : `<input type="text" class="prop-name" data-prop="name" value="${escapeAttr(m.name ?? '')}" placeholder="${escapeAttr(m.type)}" title="Name this markup — the name replaces the type in the Markups list. Clear it to go back to the type." spellcheck="false">`}
     </div>
     <div class="prop-section-label">Appearance</div>
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
@@ -2320,28 +2386,74 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
 }
 
 /** Attach change handlers for the data-prop inputs of the selected markup. */
+/** Merge a patch into a tool's saved defaults, deep-merging `overrides`. */
+function mergeToolDefaults(cur: ToolDefaults | undefined, patch: Record<string, unknown>): ToolDefaults {
+  const next: Record<string, unknown> = { ...(cur ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === 'overrides') {
+      next.overrides = { ...((next.overrides as object) ?? {}), ...(v as object) };
+    } else {
+      next[k] = v;
+    }
+  }
+  return next as ToolDefaults;
+}
+
 function wireProperties(props: HTMLElement, selectedId: string | undefined): void {
-  if (!selectedId) return;
-  // The name field commits on every keystroke; renderRightPanel hands focus
-  // and caret back afterwards, so typing is uninterrupted.
-  props.querySelector<HTMLInputElement>('.prop-name')?.addEventListener('input', (e) => {
+  // No selection = the panel is showing the ARMED TOOL's defaults, and every
+  // edit is saved for the next markup that tool draws instead of applied to an
+  // existing one. Same controls, same handlers, different destination.
+  const toolKey = selectedId ? null : getState().activeTool;
+  if (!selectedId && !(toolKey && TOOL_MARKUP_TYPE[toolKey])) return;
+
+  /** The markup the panel is editing, or the tool prototype standing in. */
+  const subject = (): Markup | null => {
     const doc = getActiveDoc();
-    if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
-    const trimmed = (e.target as HTMLInputElement).value.trim();
+    if (!doc) return null;
+    return selectedId
+      ? doc.markups.find((mk) => mk.id === selectedId) ?? null
+      : protoMarkup(toolKey!, doc);
+  };
+
+  /** Apply a patch to the selected markup, or to the armed tool's defaults. */
+  const write = (patch: Record<string, unknown>, label: string): void => {
+    const doc = getActiveDoc();
+    if (!doc) return;
+    if (!selectedId) {
+      updateActiveDoc((d) => ({
+        ...d,
+        toolDefaults: { ...d.toolDefaults, [toolKey!]: mergeToolDefaults(d.toolDefaults?.[toolKey!], patch) },
+      }));
+      return;
+    }
     applyMarkupChange(
-      'Rename markup',
-      doc.markups.map((mk) =>
-        mk.id === selectedId ? { ...mk, name: trimmed === '' ? undefined : trimmed } : mk,
-      ),
+      label,
+      doc.markups.map((mk) => {
+        if (mk.id !== selectedId) return mk;
+        const next = { ...mk } as Record<string, unknown>;
+        for (const [k, v] of Object.entries(patch)) {
+          next[k] = k === 'overrides' ? { ...(mk.overrides ?? {}), ...(v as object) } : v;
+        }
+        return next as unknown as Markup;
+      }),
     );
+  };
+  const setOverride = (key: string, value: unknown, label = 'Edit properties'): void =>
+    write({ overrides: { [key]: value } }, label);
+  // The name field commits on every keystroke. renderRightPanel leaves the
+  // panel alone while it has focus, so the caret and the rest of the word
+  // survive. (A prototype has no name field — there's no markup to name yet.)
+  props.querySelector<HTMLInputElement>('.prop-name')?.addEventListener('input', (e) => {
+    const trimmed = (e.target as HTMLInputElement).value.trim();
+    write({ name: trimmed === '' ? undefined : trimmed }, 'Rename markup');
   });
 
   props.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-prop]').forEach((input) => {
     input.addEventListener('change', () => {
-      const doc = getActiveDoc();
-      const m = doc?.markups.find((mk) => mk.id === selectedId);
-      if (!doc || !m) return;
+      const m = subject();
+      if (!m) return;
       const prop = input.dataset.prop!;
+      if (prop === 'name') return; // handled live above
 
       // "Custom…" line weight prompts for a free value. Don't write it back
       // into the select — there is no matching <option>, which would blank
@@ -2351,47 +2463,29 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         const entered = prompt('Line weight (pt)', '1');
         const w = entered ? Number(entered) : NaN;
         if (!Number.isFinite(w) || w <= 0) {
-          input.value = String(m.overrides?.lineWeight ?? doc.pageDefaults[m.pageIndex]?.lineWeight ?? 1);
+          input.value = String(
+            m.overrides?.lineWeight ?? getActiveDoc()?.pageDefaults[m.pageIndex]?.lineWeight ?? 1,
+          );
           return;
         }
         rawValue = String(w);
       }
 
-      const next = doc.markups.map((mk) => {
-        if (mk.id !== selectedId) return mk;
-        if (prop === 'tickStyle' && mk.type === 'dimension') {
-          return { ...mk, tickStyle: rawValue as 'slash' | 'arrow' };
-        }
-        if (prop === 'roundTo' && mk.type === 'dimension') {
-          return { ...mk, roundTo: rawValue === '' ? undefined : Number(rawValue) };
-        }
-        // Stays an override even when blanked — untick the box to go back to
-        // the measured value.
-        if (prop === 'customLabel' && mk.type === 'dimension') {
-          return { ...mk, customLabel: rawValue };
-        }
-        if (prop === 'decimals' && (mk.type === 'polygon' || mk.type === 'rectangle')) {
-          return { ...mk, decimals: Number(rawValue) };
-        }
-        // Custom name lives on the markup, not in `overrides`. Blank clears it
-        // so the list falls back to showing the markup type.
-        if (prop === 'name') {
-          const trimmed = rawValue.trim();
-          return { ...mk, name: trimmed === '' ? undefined : trimmed };
-        }
-        // The highlighter's "line weight" IS its pen width
-        if (prop === 'lineWeight' && mk.type === 'inkHighlight') {
-          return { ...mk, penWidth: Number(rawValue) };
-        }
-        if (prop === 'rotation' && (mk.type === 'rectangle' || mk.type === 'ellipse')) {
-          return { ...mk, rotation: Number(rawValue) || 0 };
-        }
-        // Appearance overrides
-        const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
-        const value = numeric.includes(prop) ? Number(rawValue) : rawValue;
-        return { ...mk, overrides: { ...mk.overrides, [prop]: value } };
-      });
-      applyMarkupChange('Edit properties', next);
+      // Markup fields, not appearance overrides
+      if (prop === 'tickStyle') return write({ tickStyle: rawValue }, 'Edit properties');
+      if (prop === 'roundTo') {
+        return write({ roundTo: rawValue === '' ? undefined : Number(rawValue) }, 'Edit properties');
+      }
+      if (prop === 'decimals') return write({ decimals: Number(rawValue) }, 'Edit properties');
+      if (prop === 'rotation') return write({ rotation: Number(rawValue) || 0 }, 'Edit properties');
+      if (prop === 'customLabel') return write({ customLabel: rawValue }, 'Edit properties');
+      // The free-hand highlighter's "line weight" IS its pen width
+      if (prop === 'lineWeight' && m.type === 'inkHighlight') {
+        return write({ penWidth: Number(rawValue) }, 'Edit properties');
+      }
+
+      const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
+      setOverride(prop, numeric.includes(prop) ? Number(rawValue) : rawValue);
     });
   });
 
@@ -2412,43 +2506,28 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   props.querySelector<HTMLInputElement>('[data-dim-override]')?.addEventListener('change', (e) => {
     const on = (e.target as HTMLInputElement).checked;
     const doc = getActiveDoc();
-    const m = doc?.markups.find((mk) => mk.id === selectedId);
+    const m = subject();
     if (!doc || !m || m.type !== 'dimension') return;
+    // On a not-yet-drawn dimension there is nothing to measure, so the field
+    // simply opens empty rather than seeded.
     const seed = on
-      ? formatLength(
-          dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }),
-          doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null,
-          m.roundTo,
-        )
+      ? m.id === TOOL_PROTO_ID
+        ? ''
+        : formatLength(
+            dist({ x: m.x1, y: m.y1 }, { x: m.x2, y: m.y2 }),
+            doc.pageDefaults[m.pageIndex]?.scaleFactor ?? null,
+            m.roundTo,
+          )
       : undefined;
-    const next = doc.markups.map((mk) =>
-      mk.id === selectedId ? { ...mk, customLabel: seed } : mk,
-    );
-    applyMarkupChange(on ? 'Override dimension' : 'Clear dimension override', next);
+    write({ customLabel: seed }, on ? 'Override dimension' : 'Clear dimension override');
   });
 
   // Boolean checkboxes that live in `overrides` (Multiply infill, box Border)
   props.querySelectorAll<HTMLInputElement>('[data-override-flag]').forEach((cb) => {
-    cb.addEventListener('change', () => {
-      const doc = getActiveDoc();
-      if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
-      const flag = cb.dataset.overrideFlag!;
-      const next = doc.markups.map((mk) =>
-        mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [flag]: cb.checked } } : mk,
-      );
-      applyMarkupChange('Edit properties', next);
-    });
+    cb.addEventListener('change', () => setOverride(cb.dataset.overrideFlag!, cb.checked));
   });
 
-  const setFill = (value: string | null): void => {
-    const doc = getActiveDoc();
-    const m = doc?.markups.find((mk) => mk.id === selectedId);
-    if (!doc || !m) return;
-    const next = doc.markups.map((mk) =>
-      mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, fillColor: value } } : mk,
-    );
-    applyMarkupChange('Edit fill', next);
-  };
+  const setFill = (value: string | null): void => setOverride('fillColor', value, 'Edit fill');
 
   // Line / Infill / Text color wells open the standard swatch palette popup
   // (plus "More colors…"), exactly like the page-default color boxes
@@ -2456,7 +2535,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
     btn.addEventListener('click', () => {
       const prop = btn.dataset.cprop as 'strokeColor' | 'fillColor' | 'textColor';
       const doc = getActiveDoc();
-      const m = doc?.markups.find((mk) => mk.id === selectedId);
+      const m = subject();
       if (!doc || !m) return;
       const defaults = doc.pageDefaults[m.pageIndex];
       const cur =
@@ -2466,16 +2545,8 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
             (prop === 'strokeColor' ? defaults?.strokeColor : defaults?.textColor) ??
             DEFAULT_COLOR;
       openSwatchPopup(btn, cur ?? DEFAULT_COLOR, (color) => {
-        if (prop === 'fillColor') {
-          setFill(color);
-        } else {
-          const fresh = getActiveDoc();
-          if (!fresh) return;
-          const next = fresh.markups.map((mk) =>
-            mk.id === selectedId ? { ...mk, overrides: { ...mk.overrides, [prop]: color } } : mk,
-          );
-          applyMarkupChange('Edit properties', next);
-        }
+        if (prop === 'fillColor') setFill(color);
+        else setOverride(prop, color);
         btn.style.background = color;
       });
     });
@@ -2489,7 +2560,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       return;
     }
     const doc = getActiveDoc();
-    const m = doc?.markups.find((mk) => mk.id === selectedId);
+    const m = subject();
     const cur =
       m?.overrides?.fillColor ?? doc?.pageDefaults[m?.pageIndex ?? 0]?.fillColor ?? DEFAULT_COLOR;
     setFill(cur ?? DEFAULT_COLOR);
@@ -2497,25 +2568,12 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
 
   // Boolean flag checkboxes (polyline total length, polygon area)
   props.querySelectorAll<HTMLInputElement>('[data-flag]').forEach((cb) => {
-    cb.addEventListener('change', () => {
-      const doc = getActiveDoc();
-      const m = doc?.markups.find((mk) => mk.id === selectedId);
-      if (!doc || !m) return;
-      const flag = cb.dataset.flag!;
-      const next = doc.markups.map((mk) =>
-        mk.id === selectedId ? ({ ...mk, [flag]: cb.checked } as typeof mk) : mk,
-      );
-      applyMarkupChange('Edit properties', next);
-    });
+    cb.addEventListener('change', () => write({ [cb.dataset.flag!]: cb.checked }, 'Edit properties'));
   });
 
   // Arrow controls (line / polyline / callout): start/end checkboxes + style + size
-  const applyArrow = (patch: Partial<Pick<Markup, 'arrowStart' | 'arrowEnd' | 'arrowSize'>>): void => {
-    const doc = getActiveDoc();
-    if (!doc?.markups.some((mk) => mk.id === selectedId)) return;
-    const next = doc.markups.map((mk) => (mk.id === selectedId ? { ...mk, ...patch } : mk));
-    applyMarkupChange('Edit arrow', next);
-  };
+  const applyArrow = (patch: Partial<Pick<Markup, 'arrowStart' | 'arrowEnd' | 'arrowSize'>>): void =>
+    write(patch as Record<string, unknown>, 'Edit arrow');
   const arrowStyleSel = props.querySelector<HTMLSelectElement>('[data-arrow-style]');
   const currentStyle = (): ArrowHead => (arrowStyleSel?.value as ArrowHead) || 'filled';
 
@@ -2527,7 +2585,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   });
 
   arrowStyleSel?.addEventListener('change', () => {
-    const m = getActiveDoc()?.markups.find((mk) => mk.id === selectedId);
+    const m = subject();
     if (!m) return;
     const style = currentStyle();
     const patch: Partial<Pick<Markup, 'arrowStart' | 'arrowEnd'>> = {};

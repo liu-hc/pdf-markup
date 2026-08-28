@@ -364,21 +364,33 @@ input, select, textarea, button {
   box-shadow: inset 0 0 0 1.5px var(--dirty);
 }
 
+/* Always visible — a close control you have to hover to discover isn't one.
+   Sized as a real hit target rather than a bare glyph. */
 .tab-close {
-  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  margin-right: -4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  opacity: 0.55;
   font-size: var(--font-md);
   line-height: 1;
   color: var(--text-2);
-  transition: opacity var(--t), color var(--t);
+  transition: opacity var(--t), color var(--t), background var(--t);
 }
 
 .doc-tab:hover .tab-close {
-  opacity: 0.6;
+  opacity: 0.85;
 }
 
-.doc-tab:hover .tab-close:hover {
+.tab-close:hover {
   opacity: 1;
-  color: var(--text);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* ── Ribbon — floating glass toolbar over the canvas ───────────────────── */
@@ -1519,6 +1531,7 @@ body.grabbing * {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   background: rgba(11, 20, 34, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
@@ -1539,6 +1552,57 @@ body.grabbing * {
 }
 
 .prop-head-icon svg { width: 17px; height: 17px; display: block; }
+
+/* Editable markup name. min-width:0 is what actually keeps it inside the
+   panel — without it the input's default intrinsic width wins over the flex
+   basis and the field runs past the panel edge on narrow panels. */
+.prop-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: #fff;
+  text-overflow: ellipsis;
+}
+
+/* Armed-tool header: the tool name plus a note that these are the settings
+   the next markup will be created with, not an existing markup's. */
+.prop-head-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: #fff;
+  text-transform: capitalize;
+}
+
+.prop-head-tool em {
+  font-style: normal;
+  font-size: var(--font-xs);
+  font-weight: 400;
+  color: var(--text-3);
+  text-transform: none;
+}
+
+.prop-name::placeholder {
+  color: var(--text-3);
+  font-weight: 400;
+  text-transform: capitalize;
+}
+
+.prop-name:focus {
+  outline: none;
+  border-color: var(--accent-bright);
+  background: rgba(255, 255, 255, 0.1);
+}
 
 .prop-head strong {
   display: block;
@@ -2305,4 +2369,11 @@ body.grabbing * {
   font-size: var(--font-sm);
   color: var(--text-2);
   line-height: 1.5;
+}
+
+/* Checkmark column on toggleable menu commands */
+.dropdown li .menu-check {
+  min-width: 10px;
+  color: var(--accent-bright);
+  font-weight: 700;
 }

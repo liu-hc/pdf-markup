@@ -84,7 +84,18 @@ function canvasFont(sizePx: number, family: string, bold = false): string {
 
 /** Markup types that paint an enclosed infill (the only ones the multiply
  *  pass has anything to draw for). */
-const FILL_SHAPES = new Set(['rectangle', 'ellipse', 'polygon', 'cloud', 'text', 'callout']);
+const FILL_SHAPES = new Set([
+  'rectangle',
+  'ellipse',
+  'polygon',
+  'cloud',
+  'text',
+  'callout',
+  // Both highlight kinds are a colour wash: the rect's is an infill, the
+  // free-hand swipe's is its stroke. Either way it's what Multiply blends.
+  'highlighter',
+  'inkHighlight',
+]);
 
 /** Which pass of the two-canvas markup render this call is painting.
  *  `multiply` fills go on a separate `mix-blend-mode: multiply` canvas so they
@@ -95,6 +106,7 @@ export type DrawPhase = 'normal' | 'multiply';
 export function hasMultiplyFill(markup: Markup, defaults: PageDefaults): boolean {
   if (!(markup.overrides?.fillMultiply ?? false)) return false;
   if (!FILL_SHAPES.has(markup.type)) return false;
+  if (markup.type === 'highlighter' || markup.type === 'inkHighlight') return true;
   const style = resolveStyle(markup, defaults);
   return !!style.fill || markup.type === 'callout';
 }
@@ -168,11 +180,20 @@ export function drawMarkupOnCanvas(
       break;
     }
     case 'highlighter': {
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = style.fill ?? '#f5c542';
+      // A highlight is a colour wash: colour, fill opacity and Multiply come
+      // from the properties panel like any other infill. Multiply is what
+      // makes it read as a real highlighter — the drawing underneath stays
+      // legible at full strength instead of being veiled by transparency.
       const x = markup.x * scale;
       const y = (pageHeight - markup.y - markup.height) * scale;
-      ctx.fillRect(x, y, markup.width * scale, markup.height * scale);
+      const hw = markup.width * scale;
+      const hh = markup.height * scale;
+      paintFill(() => {
+        ctx.fillStyle = style.fill ?? HIGHLIGHT_COLOR;
+        ctx.fillRect(x, y, hw, hh);
+      });
+      // Borderless unless the user dials in a line weight
+      if (!multiplyPass && style.lineWeight > 0) ctx.strokeRect(x, y, hw, hh);
       break;
     }
     case 'inkHighlight': {

@@ -91,6 +91,7 @@ const SNAP_RADIUS_PX = 12;
  *  a point on the drawing: the measure tools and all the shape tools. The
  *  highlighter is deliberately out — it's a free-hand swipe, not a placement. */
 function usesVectorSnap(tool: ToolId): boolean {
+  if (!getState().snapEnabled) return false;
   return (
     tool === 'dimension' ||
     tool === 'calibrate' ||
@@ -139,7 +140,7 @@ function snapToVectors(pv: PageView, p: Point): Point {
     return p;
   }
   const radius = SNAP_RADIUS_PX / pv.getScale();
-  const hit = findSnap(index, p, { radius, midpoints: true, edges: true });
+  const hit = findSnap(index, p, { radius, edges: true });
   if (!hit) return p;
   activeSnap = { pv, page: hit.point, kind: hit.kind };
   return hit.point;
@@ -882,7 +883,7 @@ function commitInk(pageIndex: number, pts: Point[]): void {
     penWidth: HL_PEN_WIDTH,
     overrides: { strokeColor: HL_COLOR, fillMultiply: true, opacity: 1 },
   };
-  applyMarkupChange('Highlight', [...docMarkups(), markup]);
+  applyMarkupChange('Highlight', [...docMarkups(), withToolDefaults('highlighter', markup)]);
 }
 
 function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
@@ -897,7 +898,10 @@ function commitTextHighlight(pageIndex: number, rects: TextBox[]): void {
     height: r.h,
     overrides: { fillColor: HL_COLOR, fillMultiply: true, fillOpacity: 1, lineWeight: 0 },
   }));
-  applyMarkupChange('Highlight text', [...docMarkups(), ...markups]);
+  applyMarkupChange('Highlight text', [
+    ...docMarkups(),
+    ...markups.map((m) => withToolDefaults('highlighter', m)),
+  ]);
 }
 
 /** Wheel-flip accumulator: trackpads emit dozens of small deltas per swipe —
@@ -1138,7 +1142,7 @@ function commitDragTool(tool: ToolId, a: Point, b: Point, e: PointerEvent, ws: W
 
   if (markup) {
     const before = docMarkups();
-    applyMarkupChange('Add markup', [...before, markup]);
+    applyMarkupChange('Add markup', [...before, withToolDefaults(tool, markup)]);
     returnToNavTool();
   }
 }
@@ -1179,7 +1183,7 @@ function commitPolyTool(tool: ToolId, rawPoints: Point[], shiftKey: boolean): vo
   }
 
   if (markup) {
-    applyMarkupChange('Add markup', [...docMarkups(), markup]);
+    applyMarkupChange('Add markup', [...docMarkups(), withToolDefaults(tool, markup)]);
     returnToNavTool();
   }
 }
@@ -1206,7 +1210,7 @@ function commitTwoClick(tool: ToolId, a: Point, b: Point, e: PointerEvent, pageI
     markup = { id: uid(), type: 'ellipse', pageIndex, cx, cy, rx, ry };
   }
   if (markup) {
-    applyMarkupChange('Add markup', [...docMarkups(), markup]);
+    applyMarkupChange('Add markup', [...docMarkups(), withToolDefaults(tool, markup)]);
     returnToNavTool();
   }
 }
@@ -1274,7 +1278,7 @@ function startCalloutTextEntry(
         content: text,
         arrowEnd: 'filled',
       };
-      applyMarkupChange('Add callout', [...docMarkups(), markup]);
+      applyMarkupChange('Add callout', [...docMarkups(), withToolDefaults('callout', markup)]);
       returnToNavTool();
     },
     onCancel: () => {
@@ -1328,7 +1332,7 @@ function handleDimClick(pv: PageView, p: Point, e: PointerEvent, ws: Workspace):
     y2: p2.y,
     offset,
   };
-  applyMarkupChange('Add markup', [...docMarkups(), markup]);
+  applyMarkupChange('Add markup', [...docMarkups(), withToolDefaults('dimension', markup)]);
   returnToNavTool();
   ws.redrawAllMarkups();
 }
@@ -1433,7 +1437,7 @@ function openTextBoxEditor(
         content: text,
         overrides: fmtToOverrides(f),
       };
-      applyMarkupChange('Add text', [...docMarkups(), markup]);
+      applyMarkupChange('Add text', [...docMarkups(), withToolDefaults('text', markup)]);
       returnToNavTool();
     },
     onCancel: () => {
@@ -1483,6 +1487,20 @@ async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace
   } catch {
     /* clipboard permission denied — in-app paste still works */
   }
+}
+
+/** Apply the tool's pre-set properties to a markup as it is created, so what
+ *  the user dialled into the properties panel before drawing is what they get.
+ *  Anything untouched falls through to the page defaults at render time. */
+export function withToolDefaults<T extends Markup>(tool: ToolId, markup: T): T {
+  const td = getActiveDoc()?.toolDefaults?.[tool];
+  if (!td) return markup;
+  const { overrides, ...fields } = td;
+  const merged: T = { ...markup, ...(fields as Partial<T>) };
+  if (overrides && Object.keys(overrides).length) {
+    merged.overrides = { ...overrides, ...markup.overrides };
+  }
+  return merged;
 }
 
 function docMarkups(): Markup[] {
@@ -1951,7 +1969,7 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
           content: text,
           overrides: fmtToOverrides(f),
         };
-        applyMarkupChange('Add text', [...docMarkups(), markup]);
+        applyMarkupChange('Add text', [...docMarkups(), withToolDefaults('text', markup)]);
         returnToNavTool();
       }
     },
@@ -2037,7 +2055,7 @@ function openCalloutEditor(
           arrowEnd: 'filled',
           overrides: fmtToOverrides(f),
         };
-        applyMarkupChange('Add callout', [...docMarkups(), markup]);
+        applyMarkupChange('Add callout', [...docMarkups(), withToolDefaults('callout', markup)]);
         returnToNavTool();
       }
     },
@@ -2178,6 +2196,20 @@ function pasteMarkups(inPlace: boolean): void {
   selectMarkups(copies.map((c) => c.id));
 }
 
+/** True while a text field anywhere in the app chrome holds focus. Tool
+ *  shortcuts stand down for the duration, so typing a markup name can use
+ *  every letter — "Roof plan" would otherwise fire flip, polyline, line and
+ *  text. Read live from the focused element rather than latched, so it can
+ *  never be left stale once focus moves on and the shortcuts come back. */
+function isTypingInChrome(): boolean {
+  const ae = document.activeElement as HTMLElement | null;
+  if (!ae || ae === document.body) return false;
+  if (!ae.closest('.right-panel, .left-panel, .menubar, .ribbon, .modal-overlay')) return false;
+  return (
+    ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || ae.isContentEditable
+  );
+}
+
 export function setupKeyboardShortcuts(): void {
   window.addEventListener('keydown', (e) => {
     // Never hijack keys while the user is typing in a field or inline editor
@@ -2185,6 +2217,7 @@ export function setupKeyboardShortcuts(): void {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
       return;
     }
+    if (isTypingInChrome()) return;
 
     // Enter finishes an in-progress polyline/polygon/measure path
     if (e.key === 'Enter' && draw.pv && isPolyTool(getState().activeTool)) {

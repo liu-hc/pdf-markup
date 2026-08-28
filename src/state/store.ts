@@ -6,7 +6,7 @@ type Listener = () => void;
 let state: AppState = {
   documents: [],
   activeDocId: null,
-  activeTool: 'flip',
+  activeTool: 'zoom',
   lastNavTool: 'select',
   selectedMarkupIds: [],
   cursorPagePoint: null,
@@ -16,6 +16,7 @@ let state: AppState = {
   rightPanelWidth: 220,
   leftPanelTab: 'thumbnails',
   rightPanelTab: 'properties',
+  snapEnabled: true,
 };
 
 const listeners = new Set<Listener>();
@@ -76,6 +77,7 @@ export function createEmptyDoc(id: string, filename: string): PdfDocumentState {
     // Multiply is the default blend — linework composites like tracing paper
     overlayMultiply: true,
     clipboard: null,
+    toolDefaults: {},
     bookmarks: [],
   };
 }

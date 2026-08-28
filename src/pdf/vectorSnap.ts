@@ -48,7 +48,7 @@ const SEGMENT_CELL = 96;
  *  only (a page-long construction line shouldn't populate the whole grid). */
 const MAX_SEGMENT_CELLS = 256;
 
-export type SnapKind = 'vertex' | 'midpoint' | 'edge';
+export type SnapKind = 'vertex' | 'edge';
 
 export interface SnapHit {
   point: Point;
@@ -527,12 +527,12 @@ export interface SnapOptions {
   radius: number;
   /** Include nearest-point-on-edge hits (the lowest-priority tier). */
   edges?: boolean;
-  /** Include segment-midpoint hits. */
-  midpoints?: boolean;
 }
 
 /** Nearest snap target to `p`, or null when nothing is within `radius`.
- *  Vertices win outright; midpoints beat plain edge points. */
+ *  Vertices win outright; anything else falls back to the nearest point along
+ *  a segment. Segment MIDPOINTS are deliberately not offered — on dense CAD
+ *  linework they pull the cursor to places nothing is actually drawn. */
 export function findSnap(index: SnapIndex, p: Point, opts: SnapOptions): SnapHit | null {
   const { radius } = opts;
   const r2 = radius * radius;
@@ -555,11 +555,9 @@ export function findSnap(index: SnapIndex, p: Point, opts: SnapOptions): SnapHit
   });
   if (best) return { point: best, kind: 'vertex', distance: Math.sqrt(bestD2) };
 
-  if (!opts.edges && !opts.midpoints) return null;
+  if (!opts.edges) return null;
 
-  // 2. Segment midpoints, then 3. nearest point on a segment
-  let midD2 = r2;
-  let mid: Point | null = null;
+  // 2. Nearest point along a segment
   let edgeD2 = r2;
   let edge: Point | null = null;
   forEachCellInRadius(index.sGrid, p, radius, (c) => {
@@ -570,34 +568,22 @@ export function findSnap(index: SnapIndex, p: Point, opts: SnapOptions): SnapHit
       const y1 = index.seg[i * 4 + 1]!;
       const x2 = index.seg[i * 4 + 2]!;
       const y2 = index.seg[i * 4 + 3]!;
-      if (opts.midpoints) {
-        const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2;
-        const d2 = (mx - p.x) ** 2 + (my - p.y) ** 2;
-        if (d2 < midD2) {
-          midD2 = d2;
-          mid = { x: mx, y: my };
-        }
-      }
-      if (opts.edges) {
-        const vx = x2 - x1;
-        const vy = y2 - y1;
-        const len2 = vx * vx + vy * vy;
-        if (len2 < 1e-12) continue;
-        let t = ((p.x - x1) * vx + (p.y - y1) * vy) / len2;
-        t = t < 0 ? 0 : t > 1 ? 1 : t;
-        const qx = x1 + vx * t;
-        const qy = y1 + vy * t;
-        const d2 = (qx - p.x) ** 2 + (qy - p.y) ** 2;
-        if (d2 < edgeD2) {
-          edgeD2 = d2;
-          edge = { x: qx, y: qy };
-        }
+      const vx = x2 - x1;
+      const vy = y2 - y1;
+      const len2 = vx * vx + vy * vy;
+      if (len2 < 1e-12) continue;
+      let t = ((p.x - x1) * vx + (p.y - y1) * vy) / len2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const qx = x1 + vx * t;
+      const qy = y1 + vy * t;
+      const d2 = (qx - p.x) ** 2 + (qy - p.y) ** 2;
+      if (d2 < edgeD2) {
+        edgeD2 = d2;
+        edge = { x: qx, y: qy };
       }
     }
   });
 
-  if (mid) return { point: mid, kind: 'midpoint', distance: Math.sqrt(midD2) };
   if (edge) return { point: edge, kind: 'edge', distance: Math.sqrt(edgeD2) };
   return null;
 }

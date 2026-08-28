@@ -268,9 +268,42 @@ export interface PdfDocumentState {
   /** Composite overlay pages onto the base page Photoshop-Multiply style. */
   overlayMultiply: boolean;
   clipboard: Markup[] | null;
+  /** Appearance the NEXT markup of each tool is created with, set in the
+   *  properties panel while that tool is armed and nothing is selected. */
+  toolDefaults: Record<string, ToolDefaults>;
   /** User bookmarks (saved into the PDF metadata alongside the markups). */
   bookmarks: BookmarkItem[];
 }
+
+/** A patch applied to a newly drawn markup. Everything here is optional; what
+ *  the user has not touched simply falls through to the page defaults. */
+export interface ToolDefaults {
+  overrides?: AppearanceOverrides;
+  arrowStart?: ArrowHead;
+  arrowEnd?: ArrowHead;
+  arrowSize?: number;
+  showArea?: boolean;
+  showLength?: boolean;
+  decimals?: number;
+  tickStyle?: 'slash' | 'arrow';
+  roundTo?: number;
+  penWidth?: number;
+}
+
+/** Markup type each drawing tool produces — used to render that tool's
+ *  properties before anything has been drawn. */
+export const TOOL_MARKUP_TYPE: Record<string, MarkupType> = {
+  rectangle: 'rectangle',
+  ellipse: 'ellipse',
+  polygon: 'polygon',
+  line: 'line',
+  polyline: 'polyline',
+  highlighter: 'highlighter',
+  text: 'text',
+  callout: 'callout',
+  dimension: 'dimension',
+  measureAngle: 'measureAngle',
+};
 
 export interface AppState {
   documents: PdfDocumentState[];
@@ -286,6 +319,8 @@ export interface AppState {
   rightPanelWidth: number;
   leftPanelTab: 'bookmarks' | 'thumbnails';
   rightPanelTab: 'properties' | 'search';
+  /** Vector snapping master switch (Markup ▸ Snap to Drawing). */
+  snapEnabled: boolean;
 }
 
 /** User bookmark: a page bookmark when `pageIndex` is set, else a foldable

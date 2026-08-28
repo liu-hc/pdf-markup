@@ -44,6 +44,10 @@ export async function loadPdfFromFile(
   setState({
     documents: [...getState().documents, doc],
     activeDocId: id,
+    // A newly opened sheet starts on Zoom — the first thing anyone does with
+    // a drawing is look around it, not mark it up.
+    activeTool: 'zoom',
+    selectedMarkupIds: [],
   });
   return id;
 }
