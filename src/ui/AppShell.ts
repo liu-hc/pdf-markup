@@ -1492,7 +1492,29 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     // Sync ribbon Page Default controls with the active page's values
     if (defaults) {
       const scSel = root.querySelector('.scale-select') as HTMLSelectElement | null;
-      if (scSel && document.activeElement !== scSel) scSel.value = defaults.scaleLabel;
+      if (scSel && document.activeElement !== scSel) {
+        // A calibrated scale that matches no standard has no <option> of its
+        // own; without one the select would silently blank. Carry a single
+        // slot for it, reused as the value changes.
+        // Exclude the measured slot itself, or it counts as a "known" scale on
+        // the very next render and removes itself — leaving the select blank.
+        const known = Array.from(scSel.options).some(
+          (o) => !o.classList.contains('measured-scale') && o.value === defaults.scaleLabel,
+        );
+        let custom = scSel.querySelector<HTMLOptionElement>('option.measured-scale');
+        if (!known) {
+          if (!custom) {
+            custom = document.createElement('option');
+            custom.className = 'measured-scale';
+            scSel.insertBefore(custom, scSel.firstChild?.nextSibling ?? null);
+          }
+          custom.value = defaults.scaleLabel;
+          custom.textContent = `${defaults.scaleLabel}  (measured)`;
+        } else if (custom) {
+          custom.remove();
+        }
+        scSel.value = defaults.scaleLabel;
+      }
       const sc = root.querySelector('.stroke-color') as HTMLElement | null;
       if (sc) sc.style.backgroundColor = defaults.strokeColor;
       const fc = root.querySelector('.fill-color') as HTMLElement | null;
@@ -2073,6 +2095,9 @@ const TEXT_BEARING_TYPES = [
   'sticky',
   'dimension',
   'polyline',
+  // A rectangle can carry an area label, so it needs the same text controls
+  // the polygon has
+  'rectangle',
   'polygon',
   'measureAngle',
 ];

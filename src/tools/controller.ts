@@ -18,7 +18,7 @@ import type {
   TextMarkup,
   ToolId,
 } from '../state/types';
-import { normalizeRect, calloutLeader, dimensionGeometry } from '../util/geometry';
+import { normalizeRect, calloutLeader, dimensionGeometry, resolveCalibratedScale } from '../util/geometry';
 import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
 import { measureTextBlockHeight } from '../markups/draw';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
@@ -1402,12 +1402,15 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
   if (real) {
     const inches = parseRealLength(real);
     if (inches && inches > 0) {
+      // Name the scale we landed on instead of reporting "Custom", snapping to
+      // the standard scale when the measurement is close enough to one.
+      const scale = resolveCalibratedScale(inches / (len / 72));
       updateActiveDoc((d) => {
         const defaults = [...d.pageDefaults];
         defaults[pageIndex] = {
           ...defaults[pageIndex]!,
-          scaleLabel: 'Custom',
-          scaleFactor: inches / (len / 72),
+          scaleLabel: scale.label,
+          scaleFactor: scale.factor,
         };
         return { ...d, pageDefaults: defaults, dirty: true };
       });
