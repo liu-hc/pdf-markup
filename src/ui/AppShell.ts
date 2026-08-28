@@ -687,9 +687,9 @@ function wireRibbon(root: HTMLElement): void {
     {
       label: 'Measure',
       tools: [
-        { id: 'calibrate', label: 'Calibrate' },
         { id: 'dimension', label: 'Dimension', key: 'D' },
         { id: 'measureAngle', label: 'Angle' },
+        { id: 'calibrate', label: 'Calibrate' },
       ],
     },
   ];

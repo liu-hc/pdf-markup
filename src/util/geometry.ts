@@ -337,12 +337,16 @@ export function scaleFactorForLabel(label: string): number | null {
 /** Resolve a measured calibration factor to a real scale.
  *
  *  Calibrating by eye never lands exactly on 48 or 96, so a factor within
- *  CALIBRATION_TOLERANCE of a standard architectural or engineering scale
+ *  CALIBRATION_TOLERANCE (4%) of a standard architectural or engineering scale
  *  snaps to that scale EXACTLY — which is what the drawing is actually at, and
  *  it stops every later dimension inheriting the pick-up error. Anything that
  *  matches nothing standard keeps its measured factor and gets a label that
- *  states it, rather than the uninformative "Custom". */
-const CALIBRATION_TOLERANCE = 0.025;
+ *  states it, rather than the uninformative "Custom".
+ *
+ *  4% is forgiving of a couple of pixels' pick-up error at working zoom while
+ *  staying well inside the ~12.5% that would risk reaching the wrong scale:
+ *  the closest pair in the whole table is 1/8" (96) against 1" = 10' (120). */
+const CALIBRATION_TOLERANCE = 0.04;
 
 export function resolveCalibratedScale(factor: number): { label: string; factor: number } {
   let best: { label: string; factor: number } | null = null;

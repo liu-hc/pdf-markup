@@ -25,6 +25,7 @@ import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
 import { ensureTextBoxes, getTextBoxesSync, type TextBox } from '../pdf/textLayer';
 import { ensureSnapIndex, findSnap, getSnapIndexSync, type SnapKind } from '../pdf/vectorSnap';
+import { showCalibrateDialog } from '../ui/CalibrateDialog';
 import type { Workspace } from '../view/Workspace';
 import type { PageView } from '../view/PageView';
 
@@ -1395,26 +1396,31 @@ function handleCalibrateClick(pv: PageView, p: Point, e: PointerEvent): void {
     calibDraw = { pv, pageIndex, p1: { ...p }, p2: null };
     return;
   }
-  activeSnap = null;
-  const real = prompt('Calibrate scale — enter the real-world length of the drawn line\n(e.g. 10\'-0", 10\', or 120 for inches)');
+  // Clear the in-progress state NOW: the dialog is async, and a stray click
+  // while it is open must not be taken as a fresh calibration point. The
+  // preview line stays up so it is obvious which line is being described.
   calibDraw = null;
+  activeSnap = null;
+  void askAndApplyCalibration(pv, pageIndex, len);
+}
+
+/** Ask for the real length, then set the page scale from it. */
+async function askAndApplyCalibration(pv: PageView, pageIndex: number, len: number): Promise<void> {
+  const inches = await showCalibrateDialog(len);
   pv.clearSvg();
-  if (real) {
-    const inches = parseRealLength(real);
-    if (inches && inches > 0) {
-      // Name the scale we landed on instead of reporting "Custom", snapping to
-      // the standard scale when the measurement is close enough to one.
-      const scale = resolveCalibratedScale(inches / (len / 72));
-      updateActiveDoc((d) => {
-        const defaults = [...d.pageDefaults];
-        defaults[pageIndex] = {
-          ...defaults[pageIndex]!,
-          scaleLabel: scale.label,
-          scaleFactor: scale.factor,
-        };
-        return { ...d, pageDefaults: defaults, dirty: true };
-      });
-    }
+  if (inches && inches > 0) {
+    // Name the scale we landed on instead of reporting "Custom", snapping to
+    // the standard scale when the measurement is close enough to one.
+    const scale = resolveCalibratedScale(inches / (len / 72));
+    updateActiveDoc((d) => {
+      const defaults = [...d.pageDefaults];
+      defaults[pageIndex] = {
+        ...defaults[pageIndex]!,
+        scaleLabel: scale.label,
+        scaleFactor: scale.factor,
+      };
+      return { ...d, pageDefaults: defaults, dirty: true };
+    });
   }
   returnToNavTool();
 }
@@ -1539,22 +1545,6 @@ export function withToolDefaults<T extends Markup>(
 
 function docMarkups(): Markup[] {
   return getActiveDoc()?.markups ?? [];
-}
-
-function parseRealLength(s: string): number | null {
-  const m = s.match(/(\d+)'(?:-(\d+(?:\/\d+)?)")?/);
-  if (!m) return Number(s) || null;
-  const feet = Number(m[1]) * 12;
-  const inches = m[2] ? evalFraction(m[2]) : 0;
-  return feet + inches;
-}
-
-function evalFraction(s: string): number {
-  if (s.includes('/')) {
-    const [n, d] = s.split('/');
-    return Number(n) / Number(d);
-  }
-  return Number(s);
 }
 
 // ── Geometry editing (select tool) ──────────────────────────────────────────
