@@ -91,9 +91,32 @@ export function setActiveTool(tool: ToolId): void {
   });
 }
 
-/** Restore the Navigate tool (select or zoom) that was active before a
- *  markup tool was picked. Called whenever a markup tool finishes. */
+/** Drawing tools that STAY ARMED after each markup, so several can be placed
+ *  in a row without re-picking the tool. Escape is how you leave them. */
+const STICKY_TOOLS: readonly ToolId[] = [
+  'rectangle',
+  'ellipse',
+  'polygon',
+  'line',
+  'polyline',
+  'highlighter',
+  'text',
+  'callout',
+  'dimension',
+  'measureAngle',
+  'calibrate',
+];
+
+/** Called whenever a markup tool finishes one markup.
+ *
+ *  The shape, annotation and measure tools keep themselves armed — drawing is
+ *  usually repetitive, and dropping back to a navigation tool after every
+ *  single markup meant re-picking the tool constantly. Escape leaves the tool
+ *  (see the keyboard handler, which returns to Zoom). Anything not in the
+ *  sticky list — the one-shot Snip — still hands back to the previous
+ *  navigation tool. */
 export function returnToNavTool(): void {
+  if (STICKY_TOOLS.includes(state.activeTool)) return;
   setActiveTool(state.lastNavTool);
 }
 

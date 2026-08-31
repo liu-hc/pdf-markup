@@ -31,7 +31,7 @@ import type { Workspace } from '../view/Workspace';
 import type { PageView } from '../view/PageView';
 
 /** Fat highlighter pen width (page points) and its translucent yellow colour. */
-const HL_PEN_WIDTH = 14;
+export const HL_PEN_WIDTH = 14;
 const HL_COLOR = '#f5c542';
 
 /** Starting appearance for a new highlight. These are SEEDS: anything the
@@ -39,13 +39,10 @@ const HL_COLOR = '#f5c542';
  *  withToolDefaults). Multiply is on by default — it is what keeps the
  *  drawing underneath legible at full strength. */
 export const HIGHLIGHT_SEED: AppearanceOverrides = {
-  fillColor: HL_COLOR,
+  strokeColor: HL_COLOR,
   fillMultiply: true,
-  fillOpacity: 1,
   opacity: 1,
-  lineWeight: 0,
 };
-
 /** Fat-marker cursor (hotspot at the nib tip); falls back to crosshair. */
 const MARKER_CURSOR =
   `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'>` +
@@ -990,14 +987,9 @@ function commitInk(pageIndex: number, pts: Point[]): void {
     // Weight on the armed highlighter means pen width to a free-hand swipe
     penWidth: getActiveDoc()?.toolDefaults?.highlighter?.penWidth ?? HL_PEN_WIDTH,
   };
-  // The highlighter has ONE colour control. It sets fillColor (what the rect
-  // wash paints with), but a swipe is drawn with its stroke — so carry the
-  // chosen colour across, or picking green would still swipe yellow.
-  const hlColor =
-    getActiveDoc()?.toolDefaults?.highlighter?.overrides?.fillColor ?? HL_COLOR;
   applyMarkupChange('Highlight', [
     ...docMarkups(),
-    withToolDefaults('highlighter', markup, { ...HIGHLIGHT_SEED, strokeColor: hlColor }),
+    withToolDefaults('highlighter', markup, HIGHLIGHT_SEED),
   ]);
 }
 
@@ -2379,7 +2371,14 @@ export function setupKeyboardShortcuts(): void {
         edit = null;
         return;
       }
-      selectMarkups([]);
+      // Nothing in progress: Escape leaves the drawing tool. Shape,
+      // annotation and measure tools stay armed between markups, so this is
+      // how you get out of one — back to Zoom under Navigate.
+      if (getState().selectedMarkupIds.length) {
+        selectMarkups([]);
+      } else if (getState().activeTool !== 'zoom') {
+        void import('../state/store').then(({ setActiveTool }) => setActiveTool('zoom'));
+      }
       return;
     }
 

@@ -352,13 +352,13 @@ async function embedMarkup(
       );
       const d = pathOf(corners, true);
       if (markup.type === 'highlighter') {
+        // A pen, not a filled shape: one colour from the Line well, its own
+        // opacity, no border — matching the canvas.
         fillPath(page, d, {
-          color: parseColor(style.fill ?? HIGHLIGHT_COLOR),
-          opacity: fillOpacity,
+          color: parseColor(style.stroke || HIGHLIGHT_COLOR),
+          opacity: lineOpacity,
           multiply,
         });
-        // Borderless unless the user dialled in a line weight
-        if (lineWeight > 0) line(corners, true);
         break;
       }
       fill(d);

@@ -106,6 +106,7 @@ export type DrawPhase = 'normal' | 'multiply';
 export function hasMultiplyFill(markup: Markup, defaults: PageDefaults): boolean {
   if (!(markup.overrides?.fillMultiply ?? false)) return false;
   if (!FILL_SHAPES.has(markup.type)) return false;
+  // A highlight's stroke IS its wash, so there is always something to blend
   if (markup.type === 'highlighter' || markup.type === 'inkHighlight') return true;
   const style = resolveStyle(markup, defaults);
   return !!style.fill || markup.type === 'callout';
@@ -180,20 +181,16 @@ export function drawMarkupOnCanvas(
       break;
     }
     case 'highlighter': {
-      // A highlight is a colour wash: colour, fill opacity and Multiply come
-      // from the properties panel like any other infill. Multiply is what
-      // makes it read as a real highlighter — the drawing underneath stays
-      // legible at full strength instead of being veiled by transparency.
+      // A highlight is a pen, not a filled shape: ONE colour (the Line well),
+      // its own opacity and a Multiply toggle. Multiply is what makes it read
+      // as a real highlighter — the drawing underneath stays legible at full
+      // strength instead of being veiled by transparency.
+      if (!fillPass) break;
       const x = markup.x * scale;
       const y = (pageHeight - markup.y - markup.height) * scale;
-      const hw = markup.width * scale;
-      const hh = markup.height * scale;
-      paintFill(() => {
-        ctx.fillStyle = style.fill ?? HIGHLIGHT_COLOR;
-        ctx.fillRect(x, y, hw, hh);
-      });
-      // Borderless unless the user dials in a line weight
-      if (!multiplyPass && style.lineWeight > 0) ctx.strokeRect(x, y, hw, hh);
+      ctx.globalAlpha = style.opacity;
+      ctx.fillStyle = style.stroke || HIGHLIGHT_COLOR;
+      ctx.fillRect(x, y, markup.width * scale, markup.height * scale);
       break;
     }
     case 'inkHighlight': {
@@ -203,7 +200,8 @@ export function drawMarkupOnCanvas(
       // The swipe IS the wash, so it follows the fill pass rather than the
       // linework pass — that's what lets Multiply darken the PDF beneath it.
       if (!fillPass) break;
-      ctx.globalAlpha = style.fillOpacity;
+      ctx.globalAlpha = style.opacity;
+      ctx.strokeStyle = style.stroke;
       ctx.lineWidth = markup.penWidth * scale;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';

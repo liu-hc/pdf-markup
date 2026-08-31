@@ -19,7 +19,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
-import { handleEditAction, HIGHLIGHT_SEED } from '../tools/controller';
+import { handleEditAction, HIGHLIGHT_SEED, HL_PEN_WIDTH } from '../tools/controller';
 import { scaleFactorForLabel } from '../util/geometry';
 import { getSnapIndexSync, isSnapLoading } from '../pdf/vectorSnap';
 // User-guide illustrations (shared with the README)
@@ -2103,6 +2103,10 @@ const TEXT_BEARING_TYPES = [
 ];
 
 /** Markups that enclose an area → get an infill color control. */
+/** The two markups the highlighter tool produces: a rect wash over selected
+ *  text, and a free-hand swipe. Both are pens — one colour, no infill. */
+const HIGHLIGHT_TYPES = ['highlighter', 'inkHighlight'];
+
 const FILL_BEARING_TYPES = [
   'rectangle',
   'ellipse',
@@ -2192,6 +2196,10 @@ function protoMarkup(tool: string, doc: NonNullable<ReturnType<typeof getActiveD
   const base = {
     id: TOOL_PROTO_ID,
     pageIndex: doc.currentPage,
+    // The highlighter's Weight IS its pen width, so the prototype has to
+    // carry the real default or the panel would advertise a width the next
+    // swipe would not use.
+    ...(tool === 'highlighter' ? { penWidth: HL_PEN_WIDTH } : {}),
     ...fields,
     overrides: { ...seed, ...overrides },
   };
@@ -2243,10 +2251,12 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   const isProto = m.id === TOOL_PROTO_ID;
   const defaults = doc.pageDefaults[m.pageIndex];
   const stroke = m.overrides?.strokeColor ?? defaults?.strokeColor ?? DEFAULT_COLOR;
-  const weight =
-    m.type === 'inkHighlight'
-      ? m.penWidth
-      : m.overrides?.lineWeight ?? defaults?.lineWeight ?? 1;
+  // On a highlight the Weight control IS the pen width — for a drawn swipe and
+  // for the armed tool alike, so the panel shows the width the next swipe will
+  // actually use.
+  const weight = HIGHLIGHT_TYPES.includes(m.type)
+    ? (m as { penWidth?: number }).penWidth ?? HL_PEN_WIDTH
+    : m.overrides?.lineWeight ?? defaults?.lineWeight ?? 1;
   const lineStyle = m.overrides?.lineStyle ?? defaults?.lineStyle ?? 'solid';
   const opacity = m.overrides?.opacity ?? 1;
   const styleOptions = (['solid', 'dashed', 'dotted', 'centerline'] as const)
@@ -2259,30 +2269,29 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
   const lineOpacityRow = `
     <label class="opacity-row">Line opacity <input type="range" class="opacity-range" data-prop="opacity" min="0.05" max="1" step="0.05" value="${opacity}"><span class="opacity-val">${Math.round(opacity * 100)}%</span></label>`;
 
-  // A highlight's colour lives in the infill well, so call it what it is
-  const fillLabel = m.type === 'highlighter' ? 'Color' : 'Infill';
-
-  // Ink swipe: no infill of its own — its stroke is the wash — so it gets a
-  // Multiply toggle of its own alongside the Line colour and Weight above.
-  const inkSection =
-    m.type === 'inkHighlight'
-      ? `<label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${
-          m.overrides?.fillMultiply ? 'checked' : ''
-        } title="Blend the highlight with the drawing beneath instead of covering it"></label>`
-      : '';
+  // A highlight is a pen, not a filled shape: one colour (the Line well), its
+  // own opacity, a Multiply toggle and a pen width. It has no infill of its
+  // own — the stroke IS the wash — so the fill colour and Fill opacity rows
+  // would be controls for something that never gets drawn.
+  const isHighlight = HIGHLIGHT_TYPES.includes(m.type);
+  const inkSection = isHighlight
+    ? `<label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${
+        m.overrides?.fillMultiply ? 'checked' : ''
+      } title="Blend the highlight with the drawing beneath instead of covering it"></label>`
+    : '';
 
   // Infill control (rectangle/ellipse/polygon/text/callout/area). The infill
   // carries its OWN opacity and an optional Multiply blend, both independent
   // of the linework opacity.
   let fillSection = '';
-  if (FILL_BEARING_TYPES.includes(m.type)) {
+  if (FILL_BEARING_TYPES.includes(m.type) && !isHighlight) {
     const fillResolved = m.overrides?.fillColor !== undefined ? m.overrides.fillColor : (defaults?.fillColor ?? null);
     const fillOn = !!fillResolved;
     const fillVal = fillResolved ?? DEFAULT_COLOR;
     const fillOpacity = m.overrides?.fillOpacity ?? opacity;
     const multiply = m.overrides?.fillMultiply ?? false;
     fillSection = `
-    <label>${fillLabel} <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
+    <label>Infill <span class="prop-color-pair"><input type="checkbox" data-fill-enable ${fillOn ? 'checked' : ''}><button type="button" class="color-box pp-color" data-cprop="fillColor" style="background:${fillOn ? fillVal : 'transparent'}" title="Fill color"></button></span></label>
     <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>${lineOpacityRow}
     <label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${multiply ? 'checked' : ''} title="Blend the infill with the drawing beneath instead of covering it"></label>`;
   }
@@ -2408,7 +2417,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
     ${fillSection}
     <label>Weight <select data-prop="lineWeight">${weightOptions}</select></label>
-    <label>Style <select data-prop="lineStyle">${styleOptions}</select></label>
+    ${isHighlight ? '' : `<label>Style <select data-prop="lineStyle">${styleOptions}</select></label>`}
     ${rotationSection}
     ${fillSection ? '' : lineOpacityRow}
     ${inkSection}
@@ -2513,18 +2522,9 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       if (prop === 'decimals') return write({ decimals: Number(rawValue) }, 'Edit properties');
       if (prop === 'rotation') return write({ rotation: Number(rawValue) || 0 }, 'Edit properties');
       if (prop === 'customLabel') return write({ customLabel: rawValue }, 'Edit properties');
-      // The free-hand highlighter's "line weight" IS its pen width
-      if (prop === 'lineWeight' && m.type === 'inkHighlight') {
+      // On a highlight, "Weight" is the pen width — there is no border to set.
+      if (prop === 'lineWeight' && HIGHLIGHT_TYPES.includes(m.type)) {
         return write({ penWidth: Number(rawValue) }, 'Edit properties');
-      }
-      // The highlighter tool makes two kinds of markup — a rect wash over text
-      // and a free-hand swipe — so Weight set on the ARMED tool has to reach
-      // both: the rect's border and the swipe's pen width.
-      if (prop === 'lineWeight' && m.id === TOOL_PROTO_ID && m.type === 'highlighter') {
-        return write(
-          { penWidth: Number(rawValue), overrides: { lineWeight: Number(rawValue) } },
-          'Edit properties',
-        );
       }
 
       const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
