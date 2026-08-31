@@ -351,6 +351,12 @@ export const DEFAULT_PAGE_DEFAULTS: PageDefaults = {
 /** Line weight presets (pt); "Custom…" prompts for any other value. */
 export const LINE_WEIGHT_OPTIONS = [0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
+/** Pen widths (pt) for the highlighter. A highlight is a fat marker stroke,
+ *  not linework — the line-weight list tops out at 12, below the tool's own
+ *  14pt default, so picking any value from it made the pen thinner than it
+ *  started. Coarser steps at the top; "Custom…" still takes any value. */
+export const HIGHLIGHT_WIDTH_OPTIONS = [4, 6, 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40];
+
 /** Text-size presets (pt) for the dropdown selectors. */
 export const TEXT_SIZE_OPTIONS = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 

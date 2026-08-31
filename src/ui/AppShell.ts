@@ -16,7 +16,7 @@ import { applyPageOrder } from '../markups/order';
 // what made the polygon "Show area" tick box flick itself back off.
 import { applyMarkupChange, clearHistory } from '../state/undo';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
+import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, HIGHLIGHT_WIDTH_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction, HIGHLIGHT_SEED, HL_PEN_WIDTH } from '../tools/controller';
@@ -2295,11 +2295,16 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label class="opacity-row">Fill opacity <input type="range" class="fill-opacity-range" data-prop="fillOpacity" min="0.05" max="1" step="0.05" value="${fillOpacity}"><span class="fill-opacity-val">${Math.round(fillOpacity * 100)}%</span></label>${lineOpacityRow}
     <label>Multiply <input type="checkbox" data-override-flag="fillMultiply" ${multiply ? 'checked' : ''} title="Blend the infill with the drawing beneath instead of covering it"></label>`;
   }
+  // A highlight's Weight is a marker width, so it gets its own coarser,
+  // much wider list than linework does.
+  const widthChoices = HIGHLIGHT_TYPES.includes(m.type)
+    ? HIGHLIGHT_WIDTH_OPTIONS
+    : LINE_WEIGHT_OPTIONS;
   const weightOptions =
-    LINE_WEIGHT_OPTIONS.map(
-      (w) => `<option value="${w}" ${w === weight ? 'selected' : ''}>${w}</option>`,
-    ).join('') +
-    (LINE_WEIGHT_OPTIONS.includes(weight) ? '' : `<option value="${weight}" selected>${weight}</option>`) +
+    widthChoices
+      .map((w) => `<option value="${w}" ${w === weight ? 'selected' : ''}>${w}</option>`)
+      .join('') +
+    (widthChoices.includes(weight) ? '' : `<option value="${weight}" selected>${weight}</option>`) +
     `<option value="custom">Custom…</option>`;
 
   let textSection = '';
@@ -2503,12 +2508,14 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
       // the value; the panel re-renders with the custom option after apply.
       let rawValue = input.value;
       if (prop === 'lineWeight' && rawValue === 'custom') {
-        const entered = prompt('Line weight (pt)', '1');
+        const isHl = HIGHLIGHT_TYPES.includes(m.type);
+        const current = isHl
+          ? (m as { penWidth?: number }).penWidth ?? HL_PEN_WIDTH
+          : m.overrides?.lineWeight ?? getActiveDoc()?.pageDefaults[m.pageIndex]?.lineWeight ?? 1;
+        const entered = prompt(isHl ? 'Pen width (pt)' : 'Line weight (pt)', String(current));
         const w = entered ? Number(entered) : NaN;
         if (!Number.isFinite(w) || w <= 0) {
-          input.value = String(
-            m.overrides?.lineWeight ?? getActiveDoc()?.pageDefaults[m.pageIndex]?.lineWeight ?? 1,
-          );
+          input.value = String(current);
           return;
         }
         rawValue = String(w);
