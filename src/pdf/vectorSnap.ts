@@ -84,6 +84,15 @@ interface CellIndex {
 }
 
 const cache = new Map<string, Map<number, SnapIndex>>();
+
+/** Indexed pages kept per document, most-recently-used first.
+ *
+ *  A dense sheet indexes to roughly 400k vertices and 200k segments — about
+ *  7MB of typed arrays. Keeping every page ever visited in a 53-page set meant
+ *  hundreds of megabytes and the GC pressure that comes with it, so the cache
+ *  is now bounded; a page that falls out is simply re-read if it is needed
+ *  again. */
+const MAX_CACHED_PAGES = 8;
 const loading = new Set<string>();
 
 function key(docId: string, pageIndex: number): string {
@@ -92,7 +101,13 @@ function key(docId: string, pageIndex: number): string {
 
 /** Synchronous read — null until the page's geometry has been extracted. */
 export function getSnapIndexSync(docId: string, pageIndex: number): SnapIndex | null {
-  return cache.get(docId)?.get(pageIndex) ?? null;
+  const docMap = cache.get(docId);
+  const hit = docMap?.get(pageIndex);
+  if (!hit || !docMap) return hit ?? null;
+  // Re-insert so Map iteration order stays least-recently-used first
+  docMap.delete(pageIndex);
+  docMap.set(pageIndex, hit);
+  return hit;
 }
 
 /** True while a page's geometry is still being extracted. */
@@ -135,7 +150,13 @@ export async function ensureSnapIndex(
       docMap = new Map();
       cache.set(docId, docMap);
     }
+    docMap.delete(pageIndex);
     docMap.set(pageIndex, index);
+    while (docMap.size > MAX_CACHED_PAGES) {
+      const oldest = docMap.keys().next().value;
+      if (oldest === undefined) break;
+      docMap.delete(oldest);
+    }
     return index;
   } catch {
     return null;

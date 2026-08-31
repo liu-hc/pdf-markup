@@ -176,29 +176,41 @@ function resnapInProgress(pageIndex: number): void {
   }
 }
 
-/** Start reading a page's geometry as soon as it is on screen, rather than
- *  waiting for the first hover over it.
+/** How long to let a page settle before reading its geometry. Reading the
+ *  content stream costs about as much as drawing it (~2.2s on the heaviest
+ *  sheet measured) and both run on the same pdf.js worker, so starting it
+ *  immediately makes the page itself slow to appear. */
+const SNAP_PRIME_DELAY_MS = 400;
+
+/** Start reading a page's geometry before the first click needs it.
  *
- *  Reading it took the best part of a second on a large sheet, and nothing
- *  kicked it off until a snap tool was hovered — so the FIRST click on any
- *  page always landed before the index existed and never snapped, while every
- *  click after it did. Priming on page/document change closes that window:
- *  by the time a tool is armed and the cursor is over the drawing, the
- *  geometry is already there.
+ *  Nothing used to kick this off until a snap tool was hovered, so the FIRST
+ *  click on any page landed before the index existed and never snapped. It now
+ *  starts when a snapping tool is armed — but deliberately NOT on every page
+ *  change: the read is a second full parse of the content stream on top of the
+ *  render's, and paying that for pages the user only scrolls past made loading
+ *  noticeably slower for no benefit.
  *
- *  primeSnap is a Map lookup once the page is loaded, so running this on every
- *  state change costs nothing. It respects the Markup ▸ Snap to Drawing
- *  switch: with snapping off, nothing is parsed at all. */
+ *  A click that still beats the parse is caught by resnapInProgress, so the
+ *  delay costs correctness nothing. Respects Markup ▸ Snap to Drawing: with
+ *  snapping off, nothing is parsed at all. */
 export function setupSnapPriming(): void {
   let last = '';
+  let timer: number | null = null;
   subscribe(() => {
-    if (!getState().snapEnabled) return;
+    const state = getState();
+    if (!state.snapEnabled || !usesVectorSnap(state.activeTool)) return;
     const doc = getActiveDoc();
     if (!doc?.pdfDoc) return;
     const key = `${doc.id}:${doc.currentPage}`;
     if (key === last) return;
     last = key;
-    primeSnap(doc.currentPage);
+    const page = doc.currentPage;
+    if (timer !== null) clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timer = null;
+      primeSnap(page);
+    }, SNAP_PRIME_DELAY_MS);
   });
 }
 
