@@ -501,7 +501,21 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
   setTimeout(() => document.addEventListener('pointerdown', onDocDown, true), 0);
   docDown = onDocDown;
 
-  root.addEventListener('blur', () => finish(true));
+  // Blur means "focus left the editor", which is normally the end of the edit
+  // — but a <select> in the toolbar HAS to take focus to open its list (see
+  // the pointerdown handler above, which exempts them from preventDefault).
+  // Committing on that blur tore the editor down the moment the size box was
+  // clicked, so the new size had nothing left to apply to. Focus moving into
+  // our own toolbar is therefore not the end of anything.
+  root.addEventListener('blur', (e) => {
+    const next = (e as FocusEvent).relatedTarget as Node | null;
+    if (next && (root.contains(next) || bar?.contains(next))) return;
+    // Chrome reports no relatedTarget when a native select popup opens; the
+    // control itself is focused, so check that too before ending the edit.
+    const active = document.activeElement;
+    if (active && (active === root || bar?.contains(active))) return;
+    finish(true);
+  });
   for (const ev of ['pointerup', 'pointermove', 'dblclick', 'wheel', 'contextmenu']) {
     root.addEventListener(ev, (e) => e.stopPropagation());
   }
