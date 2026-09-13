@@ -183,7 +183,6 @@ input, select, textarea, button {
   display: block;
   width: 100%;
   height: 100%;
-  image-rendering: pixelated;
 }
 
 .menu-nav {
@@ -1418,10 +1417,10 @@ body.grabbing * {
   user-select: none;
 }
 
-/* Pixel-art mascot ("Corgi L", high-res with real transparency): sits
-   directly on the muted-blue canvas, no backdrop behind it.
-   No image-rendering:pixelated — the source is far larger than the display
-   size, so a smooth downscale keeps its edges clean. */
+/* Pixel-art mascot, a vector recreation of the corgi (public/corgi.svg): sits
+   directly on the muted-blue canvas, no backdrop behind it. The SVG keeps its
+   hard pixel edges at any size via shape-rendering="crispEdges", so there is
+   nothing to downscale and no raster hint to set. */
 .empty-mascot {
   width: 256px;
   height: 256px;
@@ -1429,6 +1428,23 @@ body.grabbing * {
   opacity: 0.5;
   filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.35));
   user-select: none;
+}
+
+/* The mascot is two drawings stacked in the same slot: sunglasses on at rest,
+   sunglasses up with his eyes showing while a file is over the canvas. Only
+   one is ever displayed, and both ship with the page so the swap is instant. */
+.empty-state .mascot-eyes {
+  display: none;
+}
+
+.workspace.drag-over .empty-state .mascot-shades {
+  display: none;
+}
+
+.workspace.drag-over .empty-state .mascot-eyes {
+  display: block;
+  /* He's paying attention now — brighter than the resting state */
+  opacity: 0.85;
 }
 
 .workspace.drag-over .empty-state {
@@ -2279,7 +2295,6 @@ body.grabbing * {
   display: block;
   width: 100%;
   height: 100%;
-  image-rendering: pixelated;
 }
 
 .pass-card h1 {

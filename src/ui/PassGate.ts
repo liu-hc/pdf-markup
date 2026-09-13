@@ -35,7 +35,7 @@ export function ensureAccess(): Promise<void> {
     gate.className = 'pass-gate';
     gate.innerHTML = `
       <div class="pass-card">
-        <div class="pass-mark"><img src="/corgi.png" alt="" width="72" height="72"></div>
+        <div class="pass-mark"><img src="/corgi.svg" alt="" width="72" height="72"></div>
         <h1>ShakeButtPDF</h1>
         <p class="pass-hint">Enter the passcode to continue</p>
         <form class="pass-form">

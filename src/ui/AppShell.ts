@@ -73,7 +73,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
   root.className = 'app-shell';
   root.innerHTML = `
     <header class="menubar">
-      <div class="app-mark"><img src="/corgi.png" alt="ShakeButtPDF" width="26" height="26"></div>
+      <div class="app-mark"><img src="/corgi.svg" alt="ShakeButtPDF" width="26" height="26"></div>
       <nav class="menu-nav">
         <div class="menu-item" data-menu="file">File<ul class="dropdown">
           <li data-action="new">New…</li>

@@ -54,10 +54,14 @@ Apple-style liquid glass over a full-bleed MUTED DARK-BLUE drafting canvas
 bounce along the bottom edge. UI type is Space Grotesk
 (`@fontsource-variable/space-grotesk`, imported in `main.ts`). Ribbon labels
 and tool icons are near-white with dark halos for contrast over the frost.
-The 16x16 pixel corgi is the favicon + menubar app mark
-(`public/corgi.png`) and, background-removed + EPX-upscaled to 64px
-(`public/corgi-hero.png`), the 256px empty-state mascot whose purple halo
-fades into the canvas. Key structure:
+The pixel corgi is vector art now — `public/corgi.svg` (sunglasses on) is the
+favicon, the passcode-gate mark, the menubar app mark and the 256px
+empty-state mascot. `public/corgi-eyes.svg` is the same drawing with the
+sunglasses pushed up and his eyes showing; the empty state renders both and
+CSS swaps them on `.workspace.drag-over`, so he looks up whenever a file is
+dragged over the canvas. Both are 30x30 grids with
+`shape-rendering="crispEdges"`, so they stay sharp from 16px to 256px, and no
+raster corgi remains in the repo. Key structure:
 
 - **The canvas fills the whole `.main-area`;** the ribbon, both side panels
   and the bottom HUD are absolutely-positioned frosted-glass overlays

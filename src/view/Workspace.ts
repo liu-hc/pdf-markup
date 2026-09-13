@@ -407,8 +407,12 @@ export class Workspace {
     empty.className = 'empty-state';
     // Pixel-art mascot (EPX-smoothed, transparent bg) — the purple halo
     // behind it fades into the canvas, see .empty-mascot in main.css
+    // Both mascots are rendered and swapped by CSS on .drag-over, so the
+    // glasses come off the instant a file is over the canvas — no request to
+    // wait on mid-drag.
     empty.innerHTML =
-      '<img class="empty-mascot" src="/corgi-hero.png" alt="" width="256" height="256">' +
+      '<img class="empty-mascot mascot-shades" src="/corgi.svg" alt="" width="256" height="256">' +
+      '<img class="empty-mascot mascot-eyes" src="/corgi-eyes.svg" alt="" width="256" height="256">' +
       '<p>Drop a PDF here or use File → Open</p>';
     this.el.appendChild(empty);
   }
