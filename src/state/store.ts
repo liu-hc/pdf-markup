@@ -104,7 +104,9 @@ const STICKY_TOOLS: readonly ToolId[] = [
   'callout',
   'dimension',
   'measureAngle',
-  'calibrate',
+  // Calibrate is deliberately absent: it is a one-shot action picked from the
+  // scale menu, not a drawing tool, so it hands back as soon as the scale is
+  // set rather than waiting armed for a second calibration.
 ];
 
 /** Called whenever a markup tool finishes one markup.

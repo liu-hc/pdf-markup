@@ -1556,7 +1556,83 @@ body.grabbing * {
   box-shadow: var(--glass-edge);
 }
 
-.hud-scale { color: var(--text); }
+/* The scale chip is a button: it opens the per-page scale picker */
+.hud-scale {
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--t), color var(--t);
+}
+
+.hud-scale:hover {
+  background:
+    linear-gradient(var(--hover), var(--hover)) padding-box,
+    var(--glass-bevel) border-box;
+}
+
+/* ── Scale picker, opened from the HUD chip ─────────────────────────────── */
+.scale-popup {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(22, 34, 52, 0.94), rgba(22, 34, 52, 0.94)) padding-box,
+    var(--glass-bevel) border-box;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-radius: 12px;
+  box-shadow: var(--glass-edge), 0 18px 48px rgba(6, 12, 22, 0.5);
+}
+
+.scale-popup-head {
+  padding: 8px 10px 4px;
+  font-size: var(--font-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.scale-popup-item,
+.scale-popup-custom {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: var(--font-sm);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--t);
+}
+
+.scale-popup-item:hover,
+.scale-popup-custom:hover {
+  background: var(--chrome-4);
+}
+
+.scale-popup-item.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.scale-popup-custom {
+  margin-top: 6px;
+  border-top: 1px solid var(--chrome-border-2);
+  border-radius: 0 0 7px 7px;
+  padding-top: 9px;
+  color: var(--accent-bright);
+  font-weight: 600;
+}
 
 .hud-page button,
 .hud-zoom button {

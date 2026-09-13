@@ -73,6 +73,13 @@ raster corgi remains in the repo. Key structure:
   the ribbon's measured height (re-run on mount + window resize).
 - `Workspace.fitPage()` fits the page into the *visible* region between the
   overlays (subtracts panel widths / ribbon / HUD).
+- The **Scale chip** is a button: it opens the per-page scale picker
+  (`openScalePopup` in `AppShell.ts`) listing None, 1:1, the architectural and
+  engineering presets, and "Custom — calibrate on the sheet", which arms the
+  two-click calibrate flow. Scale lives in `pageDefaults[pageIndex]`, so it is
+  per page. There is no Scale control in the ribbon and no Calibrate tool
+  button; `calibrate` remains a ToolId, reached only from that menu, and is
+  deliberately NOT in STICKY_TOOLS so it hands back once the scale is set.
 - The viewer controls (Scale chip, page ‹ n / m ›, Fit − % +) are glass pills
   centered at the very bottom of the canvas (`.canvas-hud`).
 - Overlay + Snip sit in their own **Edit** ribbon group; document tabs sit

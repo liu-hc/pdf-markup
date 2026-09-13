@@ -158,7 +158,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
         </div>
       </aside>
       <div class="canvas-hud">
-        <div class="hud-scale">Scale: None</div>
+        <button type="button" class="hud-scale" title="Set the drawing scale for this page">Scale: None</button>
         <div class="hud-page"><button class="page-prev">‹</button><span class="page-label">0/0</span><button class="page-next">›</button></div>
         <div class="hud-zoom"><button data-zoom="fit">Fit</button><button data-zoom="out">−</button><span class="zoom-label">100%</span><button data-zoom="in">+</button></div>
       </div>
@@ -596,9 +596,10 @@ function showHelpDialog(): void {
     </div>
 
     <div class="help-section"><h4>Measure</h4>
-      ${fig(guideMeasure, 'Measurement tools: calibrate, dimension, angle')}
+      ${fig(guideMeasure, 'Measurement tools: dimension and angle')}
       <ul>
-        <li><strong>Calibrate</strong> — click two points across a known distance and type its real-world length; this sets the page <strong>scale</strong>. You can also pick a preset in the ribbon: <code>1:1 (Full size)</code> for reading the sheet at its own size, architectural <code>1/4" = 1'-0"</code> …, or engineering <code>1" = 100'</code>.</li>
+        <li><strong>Scale</strong> — the <code>Scale:</code> chip at the bottom of the canvas sets it, and it belongs to <strong>the page you are on</strong>, so a sheet set can carry a different scale per sheet. Pick <code>1:1 (Full size)</code> to read the sheet at its own size, an architectural preset like <code>1/4" = 1'-0"</code>, or an engineering one like <code>1" = 100'</code>.</li>
+        <li><strong>Custom — calibrate on the sheet</strong> — the last entry in that menu. Click two points across a distance you know, type what it really measures, and the page scale is set from it. A measurement within 4% of a standard scale snaps to that scale exactly, so a drawing plotted at 1/4" reads as <code>1/4" = 1'-0"</code> rather than carrying your pick-up error; anything else is named for what it measured, e.g. <code>1" = 12.5'</code>. Snapping applies, so you can grab the exact ends of a dimension line.</li>
         <li><strong>Dimension (D)</strong> — click the two measured points, then a third click pulls the dimension line away to an offset. Architectural slash ticks or arrows, optional round-up (¼", 1", 6", 1'), and the value always reads parallel to the line.</li>
         <li><strong>Override dimension</strong> — tick it in a selected dimension's properties to type the value yourself instead of measuring it off the page scale. The box opens seeded with what the scale currently reads; whatever you type is drawn verbatim and never re-derived, so it survives a scale change (use it for <code>EQ</code>, <code>V.I.F.</code>, or a detail the drawing isn't to scale for). Clear the value for a dimension line with no text; untick the box to hand it back to the scale.</li>
         <li><strong>Angle</strong> — three clicks measure and label an angle.</li>
@@ -690,7 +691,6 @@ function wireRibbon(root: HTMLElement): void {
       tools: [
         { id: 'dimension', label: 'Dimension', key: 'D' },
         { id: 'measureAngle', label: 'Angle' },
-        { id: 'calibrate', label: 'Calibrate' },
       ],
     },
   ];
@@ -745,7 +745,6 @@ function wireRibbon(root: HTMLElement): void {
     <label>Text <select class="text-size">${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === 12 ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
     <label>Weight <select class="line-weight">${LINE_WEIGHT_OPTIONS.map((w) => `<option value="${w}" ${w === 1 ? 'selected' : ''}>${w}</option>`).join('')}<option value="custom">Custom…</option></select></label>
     <label>Style <select class="line-style"><option value="solid">Solid</option><option value="dashed">Dash 1</option><option value="dotted">Dash 2</option><option value="centerline">Centerline</option><option value="cloud">Cloud</option></select></label>
-    <label>Scale <select class="scale-select"><option>None</option><option value="${FULL_SCALE_LABEL}">${FULL_SCALE_LABEL} (Full size)</option>${ARCH_SCALES.map((s) => `<option>${s}</option>`).join('')}${ENG_SCALES.map((s) => `<option>${s}</option>`).join('')}<option value="Custom">Custom…</option></select></label>
     <label>Line <button type="button" class="color-box stroke-color" title="Line color"></button></label>
     <label>Fill <button type="button" class="color-box fill-color" title="Fill color"></button></label>
     <label>Text <button type="button" class="color-box text-color" title="Text color"></button></label>
@@ -761,28 +760,6 @@ function wireRibbon(root: HTMLElement): void {
   overlayGroup.innerHTML = `<span class="ribbon-label">Overlay</span><div class="overlay-controls"></div>`;
   ribbon.appendChild(overlayGroup);
 
-  pd.querySelector('.scale-select')?.addEventListener('change', (e) => {
-    const label = (e.target as HTMLSelectElement).value;
-    if (label === 'Custom') {
-      const input = prompt('Enter scale factor — real-world inches per PDF inch\n(e.g. 48 for 1/4"=1\'-0", 12 for 1"=1\'-0", 120 for 1"=10\')');
-      const factor = input ? Number(input) : NaN;
-      if (!isNaN(factor) && factor > 0) {
-        updateActiveDoc((d) => {
-          const defaults = [...d.pageDefaults];
-          defaults[d.currentPage] = { ...defaults[d.currentPage]!, scaleLabel: 'Custom', scaleFactor: factor };
-          return { ...d, pageDefaults: defaults, dirty: true };
-        });
-      }
-      return;
-    }
-    updateActiveDoc((d) => {
-      const defaults = [...d.pageDefaults];
-      const idx = d.currentPage;
-      const factor: number | null = scaleFactorForLabel(label);
-      defaults[idx] = { ...defaults[idx]!, scaleLabel: label, scaleFactor: factor };
-      return { ...d, pageDefaults: defaults, dirty: true };
-    });
-  });
 
   // Page-default color boxes open a palette popup (standard swatches + native
   // "More colors…"), matching the property-panel palette.
@@ -1362,6 +1339,9 @@ function wirePanelResize(root: HTMLElement): void {
 }
 
 function wireHUDs(root: HTMLElement, ws: Workspace): void {
+  const scaleChip = root.querySelector<HTMLElement>('.hud-scale');
+  scaleChip?.addEventListener('click', () => openScalePopup(scaleChip));
+
   root.querySelector('.page-prev')?.addEventListener('click', () => {
     const doc = getActiveDoc();
     if (doc) ws.goToPage(Math.max(0, doc.currentPage - 1));
@@ -1492,30 +1472,6 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
     root.querySelector('.zoom-label')!.textContent = `${Math.round(doc.zoom * 100)}%`;
     // Sync ribbon Page Default controls with the active page's values
     if (defaults) {
-      const scSel = root.querySelector('.scale-select') as HTMLSelectElement | null;
-      if (scSel && document.activeElement !== scSel) {
-        // A calibrated scale that matches no standard has no <option> of its
-        // own; without one the select would silently blank. Carry a single
-        // slot for it, reused as the value changes.
-        // Exclude the measured slot itself, or it counts as a "known" scale on
-        // the very next render and removes itself — leaving the select blank.
-        const known = Array.from(scSel.options).some(
-          (o) => !o.classList.contains('measured-scale') && o.value === defaults.scaleLabel,
-        );
-        let custom = scSel.querySelector<HTMLOptionElement>('option.measured-scale');
-        if (!known) {
-          if (!custom) {
-            custom = document.createElement('option');
-            custom.className = 'measured-scale';
-            scSel.insertBefore(custom, scSel.firstChild?.nextSibling ?? null);
-          }
-          custom.value = defaults.scaleLabel;
-          custom.textContent = `${defaults.scaleLabel}  (measured)`;
-        } else if (custom) {
-          custom.remove();
-        }
-        scSel.value = defaults.scaleLabel;
-      }
       const sc = root.querySelector('.stroke-color') as HTMLElement | null;
       if (sc) sc.style.backgroundColor = defaults.strokeColor;
       const fc = root.querySelector('.fill-color') as HTMLElement | null;
@@ -2121,6 +2077,103 @@ const FILL_BEARING_TYPES = [
 
 /** Markups that get start/end arrow controls. */
 const ARROW_BEARING_TYPES = ['line', 'polyline', 'callout'];
+
+/* ── Scale picker (the bottom HUD chip) ──────────────────────────────────
+   Scale is a property of the PAGE, not the document, so this always writes
+   to the page on screen and the chip always reads it back. */
+
+function closeScalePopup(): void {
+  document.removeEventListener('pointerdown', onScaleDocDown, true);
+  document.querySelector('.scale-popup')?.remove();
+}
+
+function onScaleDocDown(e: PointerEvent): void {
+  const pop = document.querySelector('.scale-popup');
+  const target = e.target as Node | null;
+  if (pop && target && !pop.contains(target) && !(target as HTMLElement).closest?.('.hud-scale')) {
+    closeScalePopup();
+  }
+}
+
+/** Apply a named scale to the page currently on screen. */
+function setPageScale(label: string): void {
+  updateActiveDoc((d) => {
+    const defaults = [...d.pageDefaults];
+    defaults[d.currentPage] = {
+      ...defaults[d.currentPage]!,
+      scaleLabel: label,
+      scaleFactor: scaleFactorForLabel(label),
+    };
+    return { ...d, pageDefaults: defaults, dirty: true };
+  });
+}
+
+function openScalePopup(anchor: HTMLElement): void {
+  if (document.querySelector('.scale-popup')) {
+    closeScalePopup();
+    return;
+  }
+  const doc = getActiveDoc();
+  if (!doc) return;
+  const current = doc.pageDefaults[doc.currentPage]?.scaleLabel ?? 'None';
+
+  const pop = document.createElement('div');
+  pop.className = 'scale-popup';
+
+  const addHeading = (text: string): void => {
+    const h = document.createElement('div');
+    h.className = 'scale-popup-head';
+    h.textContent = text;
+    pop.appendChild(h);
+  };
+  const addItem = (label: string, display = label): void => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'scale-popup-item' + (label === current ? ' active' : '');
+    b.textContent = display;
+    b.addEventListener('click', () => {
+      setPageScale(label);
+      closeScalePopup();
+    });
+    pop.appendChild(b);
+  };
+
+  addItem('None');
+  addItem(FULL_SCALE_LABEL, `${FULL_SCALE_LABEL} (Full size)`);
+  // A scale measured off the sheet has no entry of its own — show it so the
+  // chip's current value is always represented in the list.
+  if (current !== 'None' && current !== FULL_SCALE_LABEL && scaleFactorForLabel(current) !== null &&
+      !ARCH_SCALES.includes(current) && !ENG_SCALES.includes(current)) {
+    addItem(current, `${current}  (measured)`);
+  }
+  addHeading('Architectural');
+  for (const sc of ARCH_SCALES) addItem(sc);
+  addHeading('Engineering');
+  for (const sc of ENG_SCALES) addItem(sc);
+
+  // Custom no longer asks for a bare multiplier: it arms the two-click
+  // calibration, which is the way anyone actually knows their scale — pick a
+  // known dimension on the sheet and type what it measures.
+  const custom = document.createElement('button');
+  custom.type = 'button';
+  custom.className = 'scale-popup-custom';
+  custom.textContent = 'Custom — calibrate on the sheet…';
+  custom.title = 'Click two points across a known distance, then type its real length';
+  custom.addEventListener('click', () => {
+    closeScalePopup();
+    setActiveTool('calibrate');
+  });
+  pop.appendChild(custom);
+
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(Math.round(r.left + r.width / 2 - w / 2), window.innerWidth - w - 8))}px`;
+  // Sits above the chip, which lives at the bottom of the canvas
+  pop.style.bottom = `${Math.round(window.innerHeight - r.top + 8)}px`;
+  pop.querySelector('.active')?.scrollIntoView({ block: 'center' });
+  setTimeout(() => document.addEventListener('pointerdown', onScaleDocDown, true), 0);
+}
 
 /* ── Color palette popup (toolbar color boxes) ─────────────────────────── */
 function closeSwatchPopup(): void {
