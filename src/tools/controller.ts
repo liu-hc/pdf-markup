@@ -12,6 +12,7 @@ import {
 import type {
   AppearanceOverrides,
   CalloutMarkup,
+  TextParagraph,
   InkMarkup,
   Markup,
   Point,
@@ -20,8 +21,11 @@ import type {
   ToolId,
 } from '../state/types';
 import { normalizeRect, calloutLeader, dimensionGeometry, resolveCalibratedScale } from '../util/geometry';
+import { DEFAULT_TEXT_MARGIN } from '../state/types';
 import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
-import { measureTextBlockHeight } from '../markups/draw';
+import { measureParagraphHeight, paragraphsOf } from '../markups/draw';
+import { spawnRichTextEditor, type BoxFormatting } from '../ui/RichTextEditor';
+import { resolveMargin, textFromParagraphs } from '../markups/textLayout';
 import { moveToBack, moveToFront, nudgeOrder } from '../markups/order';
 import { applyMarkupChange, recordMarkupChange } from '../state/undo';
 import { ensureTextBoxes, getTextBoxesSync, type TextBox } from '../pdf/textLayer';
@@ -1344,30 +1348,24 @@ function startCalloutTextEntry(
   anchor: Point,
   topLeft: Point,
 ): void {
-  const scale = pv.getScale();
-  const ph = pv.getPageHeight();
   const color = previewColor(pageIndex);
   const box = { x: topLeft.x, y: topLeft.y - CALLOUT_H, w: CALLOUT_W, h: CALLOUT_H };
   const kink = defaultCalloutKink(box, anchor);
   const leader = calloutLeader(box.x, box.y, box.w, box.h, anchor.x, anchor.y, kink.x, kink.y);
   pv.drawCalloutGuide([leader.exit, leader.kink, anchor], box, color, { tip: anchor, from: leader.kink });
 
-  spawnTextEditor({
+  editBoxText({
     pv,
-    leftPx: box.x * scale,
-    topPx: (ph - box.y - box.h) * scale,
-    widthPx: box.w * scale,
-    heightPx: box.h * scale,
-    initial: '',
-    font: editorFont(pageIndex),
+    pageIndex,
+    box,
+    paragraphs: [],
+    overrides: undefined,
     transparent: true, // type "in the box": no separate popup styling
-    onCommit: (text, wPx, hPx) => {
+    onCommit: (paras, size, boxFmt) => {
       pv.clearSvg();
-      const w = wPx / scale;
-      const h = hPx / scale;
-      // The editor may have grown/resized the box — place the default elbow
-      // relative to the FINAL box so the flat run stays CALLOUT_KINK_RUN
-      const finalBox = { x: topLeft.x, y: topLeft.y - h, w, h };
+      // The editor may have grown the box — place the default elbow relative
+      // to the FINAL box so the flat run stays CALLOUT_KINK_RUN
+      const finalBox = { x: topLeft.x, y: topLeft.y - size.h, w: size.w, h: size.h };
       const finalKink = defaultCalloutKink(finalBox, anchor);
       const markup: CalloutMarkup = {
         id: uid(),
@@ -1375,22 +1373,20 @@ function startCalloutTextEntry(
         pageIndex,
         textX: finalBox.x,
         textY: finalBox.y,
-        textWidth: w,
-        textHeight: h,
+        textWidth: size.w,
+        textHeight: size.h,
         anchorX: anchor.x,
         anchorY: anchor.y,
         kinkX: finalKink.x,
         kinkY: finalKink.y,
-        content: text,
+        content: textFromParagraphs(paras),
+        paragraphs: paras,
         arrowEnd: 'filled',
+        overrides: boxFmtToOverrides(boxFmt),
       };
       applyMarkupChange('Add callout', [...docMarkups(), withToolDefaults('callout', markup)]);
-      returnToNavTool();
     },
-    onCancel: () => {
-      pv.clearSvg();
-      returnToNavTool();
-    },
+    onCancel: () => pv.clearSvg(),
   });
 }
 
@@ -1516,48 +1512,34 @@ function openTextBoxEditor(
   pageIndex: number,
   rect: { x: number; y: number; width: number; height: number },
 ): void {
-  const scale = pv.getScale();
-  const ph = pv.getPageHeight();
   const color = previewColor(pageIndex);
-  const top = rect.y + rect.height; // page-y of the box top edge
-  const font = editorFont(pageIndex);
   // Show the box outline while typing
   pv.drawCalloutGuide([], { x: rect.x, y: rect.y, w: rect.width, h: rect.height }, color, null);
-  spawnTextEditor({
+  editBoxText({
     pv,
-    leftPx: rect.x * scale,
-    topPx: (ph - top) * scale,
-    widthPx: rect.width * scale,
-    heightPx: rect.height * scale,
-    initial: '',
-    font,
+    pageIndex,
+    box: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+    paragraphs: [],
+    overrides: undefined,
     transparent: true,
-    formatting: initialFormatting(undefined, font.spacing),
-    onCommit: (text, wPx, hPx, fmt) => {
+    onCommit: (paras, size, boxFmt) => {
       pv.clearSvg();
-      const f = fmt ?? initialFormatting(undefined, font.spacing);
-      const w = wPx / scale;
-      // Grow the box to fit the wrapped text (the canvas clips to the box)
-      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, f.lineSpacing, f.bold, f.indent);
-      const h = Math.max(hPx / scale, contentH + 8);
+      const top = rect.y + rect.height;
       const markup: TextMarkup = {
         id: uid(),
         type: 'text',
         pageIndex,
         x: rect.x,
-        y: top - h, // keep the box top anchored if the editor was resized
-        width: w,
-        height: h,
-        content: text,
-        overrides: fmtToOverrides(f),
+        y: top - size.h, // keep the box top anchored if the editor grew
+        width: size.w,
+        height: size.h,
+        content: textFromParagraphs(paras),
+        paragraphs: paras,
+        overrides: boxFmtToOverrides(boxFmt),
       };
       applyMarkupChange('Add text', [...docMarkups(), withToolDefaults('text', markup)]);
-      returnToNavTool();
     },
-    onCancel: () => {
-      pv.clearSvg();
-      returnToNavTool();
-    },
+    onCancel: () => pv.clearSvg(),
   });
 }
 
@@ -1841,6 +1823,83 @@ function editorFont(
   };
 }
 
+/** Open the rich editor over a box and report what came back.
+ *
+ *  Text boxes and callouts differ only in where the box lives on the markup,
+ *  so they share this; the caller deals in page units and paragraphs and never
+ *  touches the editor's DOM. */
+function editBoxText(opts: {
+  pv: PageView;
+  pageIndex: number;
+  /** Box in page units; y is the BOTTOM edge, as markups store it. */
+  box: { x: number; y: number; w: number; h: number };
+  paragraphs: TextParagraph[];
+  overrides: TextMarkup['overrides'];
+  transparent?: boolean;
+  onCommit: (
+    paragraphs: TextParagraph[],
+    size: { w: number; h: number },
+    box: BoxFormatting,
+  ) => void;
+  onCancel: () => void;
+}): void {
+  const { pv, pageIndex, box } = opts;
+  const scale = pv.getScale();
+  const ph = pv.getPageHeight();
+  const defs = getActiveDoc()?.pageDefaults[pageIndex];
+  const fontSize = opts.overrides?.fontSize ?? defs?.fontSize ?? 12;
+  const fontFamily = opts.overrides?.fontFamily ?? defs?.fontFamily ?? 'Arial';
+  spawnRichTextEditor({
+    host: pv.el,
+    scale,
+    leftPx: box.x * scale,
+    topPx: (ph - box.y - box.h) * scale,
+    widthPx: box.w * scale,
+    heightPx: box.h * scale,
+    paragraphs: opts.paragraphs,
+    fontSize,
+    fontFamily,
+    color: opts.overrides?.textColor ?? defs?.textColor ?? '#002060',
+    transparent: opts.transparent,
+    box: {
+      lineSpacing: opts.overrides?.lineSpacing ?? 1.35,
+      valign: opts.overrides?.valign ?? 'top',
+      margin: resolveMargin(opts.overrides?.margin),
+    },
+    onCommit: (paras, wPx, hPx, boxFmt) => {
+      const w = wPx / scale;
+      // Grow the box to fit what was typed — the canvas clips to the box, so a
+      // box left too short would swallow the overflow.
+      const contentH = measureParagraphHeight(paras, w - boxFmt.margin * 2, {
+        fontSize,
+        fontFamily,
+        lineSpacing: boxFmt.lineSpacing,
+        bold: opts.overrides?.bold ?? false,
+        italic: opts.overrides?.italic ?? false,
+        underline: opts.overrides?.underline ?? false,
+        indent: opts.overrides?.indent ?? 0,
+        align: opts.overrides?.align ?? 'left',
+        valign: boxFmt.valign,
+        margin: boxFmt.margin,
+      });
+      const h = Math.max(hPx / scale, contentH + boxFmt.margin * 2);
+      opts.onCommit(paras, { w, h }, boxFmt);
+    },
+    onCancel: opts.onCancel,
+  });
+}
+
+/** Box formatting from the editor → an overrides patch. Values equal to the
+ *  default become `undefined`, which clears a previously-set value on merge
+ *  and keeps them out of the saved metadata. */
+function boxFmtToOverrides(b: BoxFormatting): Partial<NonNullable<TextMarkup['overrides']>> {
+  return {
+    lineSpacing: b.lineSpacing !== 1.35 ? b.lineSpacing : undefined,
+    valign: b.valign !== 'top' ? b.valign : undefined,
+    margin: b.margin !== DEFAULT_TEXT_MARGIN ? b.margin : undefined,
+  };
+}
+
 /** Block formatting collected by the inline-editor toolbar (text/callout). */
 export interface EditorFormatting {
   bold: boolean;
@@ -2003,52 +2062,20 @@ function spawnTextEditor(opts: {
   requestAnimationFrame(() => ta.focus());
 }
 
-/** Initial toolbar formatting for an editor session, from overrides. */
-function initialFormatting(existing: { overrides?: TextMarkup['overrides'] } | undefined, spacing: number): EditorFormatting {
-  return {
-    bold: existing?.overrides?.bold ?? false,
-    underline: existing?.overrides?.underline ?? false,
-    indent: existing?.overrides?.indent ?? 0,
-    lineSpacing: spacing,
-    align: existing?.overrides?.align ?? 'left',
-    valign: existing?.overrides?.valign ?? 'top',
-  };
-}
 
-/** Toolbar formatting → overrides patch. Defaults become `undefined`, which
- *  both clears a previously-set value on merge and drops out of the saved
- *  JSON metadata. */
-function fmtToOverrides(f: EditorFormatting): Partial<NonNullable<TextMarkup['overrides']>> {
-  return {
-    bold: f.bold || undefined,
-    underline: f.underline || undefined,
-    indent: f.indent > 0 ? f.indent : undefined,
-    lineSpacing: f.lineSpacing !== 1.35 ? f.lineSpacing : undefined,
-    align: f.align !== 'left' ? f.align : undefined,
-    valign: f.valign !== 'top' ? f.valign : undefined,
-  };
-}
 
 function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: TextMarkup): void {
-  const scale = pv.getScale();
-  const ph = pv.getPageHeight();
-  const font = editorFont(pageIndex, existing);
-  spawnTextEditor({
+  const box = existing
+    ? { x: existing.x, y: existing.y, w: existing.width, h: existing.height }
+    : { x: at.x, y: at.y - 24, w: 160, h: 24 };
+  editBoxText({
     pv,
-    leftPx: (existing ? existing.x : at.x) * scale,
-    topPx: existing ? (ph - existing.y - existing.height) * scale : (ph - at.y) * scale,
-    widthPx: existing ? existing.width * scale : undefined,
-    heightPx: existing ? existing.height * scale : undefined,
-    initial: existing?.content ?? '',
-    font,
-    formatting: initialFormatting(existing, font.spacing),
-    onCommit: (text, wPx, hPx, fmt) => {
-      const f = fmt ?? initialFormatting(existing, font.spacing);
-      const w = wPx / scale;
-      // Grow the box to fit the wrapped text (the canvas clips to the box, so
-      // a too-short box would otherwise swallow the overflow)
-      const contentH = measureTextBlockHeight(text, w - 6, font.size, font.family, f.lineSpacing, f.bold, f.indent);
-      const h = Math.max(hPx / scale, contentH + 8);
+    pageIndex,
+    box,
+    paragraphs: existing ? paragraphsOf(existing) : [],
+    overrides: existing?.overrides,
+    onCommit: (paras, size, boxFmt) => {
+      const content = textFromParagraphs(paras);
       if (existing) {
         applyMarkupChange(
           'Edit text',
@@ -2056,11 +2083,12 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
             m.id === existing.id
               ? {
                   ...existing,
-                  content: text,
-                  width: w,
-                  height: h,
-                  y: existing.y + existing.height - h,
-                  overrides: { ...existing.overrides, ...fmtToOverrides(f) },
+                  content,
+                  paragraphs: paras,
+                  width: size.w,
+                  height: size.h,
+                  y: existing.y + existing.height - size.h,
+                  overrides: { ...existing.overrides, ...boxFmtToOverrides(boxFmt) },
                 }
               : m,
           ),
@@ -2070,20 +2098,18 @@ function openTextEditor(pv: PageView, pageIndex: number, at: Point, existing?: T
           id: uid(),
           type: 'text',
           pageIndex,
-          x: at.x,
-          y: at.y - h,
-          width: w,
-          height: h,
-          content: text,
-          overrides: fmtToOverrides(f),
+          x: box.x,
+          y: at.y - size.h,
+          width: size.w,
+          height: size.h,
+          content,
+          paragraphs: paras,
+          overrides: boxFmtToOverrides(boxFmt),
         };
         applyMarkupChange('Add text', [...docMarkups(), withToolDefaults('text', markup)]);
-        returnToNavTool();
       }
     },
-    onCancel: () => {
-      if (!existing) returnToNavTool();
-    },
+    onCancel: () => {},
   });
 }
 
@@ -2094,8 +2120,6 @@ function openCalloutEditor(
   textAt: Point,
   existing?: CalloutMarkup,
 ): void {
-  const scale = pv.getScale();
-  const ph = pv.getPageHeight();
   // A plain click (no drag): place the text box up and to the right
   if (!existing && Math.hypot(textAt.x - anchor.x, textAt.y - anchor.y) < 4) {
     textAt = { x: anchor.x + 60, y: anchor.y + 60 };
@@ -2111,23 +2135,18 @@ function openCalloutEditor(
     false,
     previewColor(pageIndex),
   );
-  const font = editorFont(pageIndex, existing);
-  spawnTextEditor({
+  editBoxText({
     pv,
-    leftPx: (existing ? existing.textX : textAt.x) * scale,
-    topPx: existing ? (ph - existing.textY - existing.textHeight) * scale : (ph - textAt.y) * scale,
-    widthPx: existing ? existing.textWidth * scale : undefined,
-    heightPx: existing ? existing.textHeight * scale : undefined,
-    initial: existing?.content ?? '',
-    font,
-    formatting: initialFormatting(existing, font.spacing),
-    onCommit: (text, wPx, hPx, fmt) => {
+    pageIndex,
+    box: existing
+      ? { x: existing.textX, y: existing.textY, w: existing.textWidth, h: existing.textHeight }
+      : { x: textAt.x, y: textAt.y - CALLOUT_H, w: CALLOUT_W, h: CALLOUT_H },
+    paragraphs: existing ? paragraphsOf(existing) : [],
+    overrides: existing?.overrides,
+    transparent: true,
+    onCommit: (paras, size, boxFmt) => {
       pv.clearSvg();
-      const f = fmt ?? initialFormatting(existing, font.spacing);
-      const w = wPx / scale;
-      // Grow the box to fit the wrapped text (the canvas clips to the box)
-      const contentH = measureTextBlockHeight(text, w - 8, font.size, font.family, f.lineSpacing, f.bold, f.indent);
-      const h = Math.max(hPx / scale, contentH + 10);
+      const content = textFromParagraphs(paras);
       if (existing) {
         applyMarkupChange(
           'Edit callout',
@@ -2135,17 +2154,18 @@ function openCalloutEditor(
             m.id === existing.id
               ? {
                   ...existing,
-                  content: text,
-                  textWidth: w,
-                  textHeight: h,
-                  textY: existing.textY + existing.textHeight - h,
-                  overrides: { ...existing.overrides, ...fmtToOverrides(f) },
+                  content,
+                  paragraphs: paras,
+                  textWidth: size.w,
+                  textHeight: size.h,
+                  textY: existing.textY + existing.textHeight - size.h,
+                  overrides: { ...existing.overrides, ...boxFmtToOverrides(boxFmt) },
                 }
               : m,
           ),
         );
       } else {
-        const nb = { x: textAt.x, y: textAt.y - h, w, h };
+        const nb = { x: textAt.x, y: textAt.y - size.h, w: size.w, h: size.h };
         const nk = defaultCalloutKink(nb, anchor);
         const markup: CalloutMarkup = {
           id: uid(),
@@ -2153,24 +2173,21 @@ function openCalloutEditor(
           pageIndex,
           textX: nb.x,
           textY: nb.y,
-          textWidth: w,
-          textHeight: h,
+          textWidth: size.w,
+          textHeight: size.h,
           anchorX: anchor.x,
           anchorY: anchor.y,
           kinkX: nk.x,
           kinkY: nk.y,
-          content: text,
+          content,
+          paragraphs: paras,
           arrowEnd: 'filled',
-          overrides: fmtToOverrides(f),
+          overrides: boxFmtToOverrides(boxFmt),
         };
         applyMarkupChange('Add callout', [...docMarkups(), withToolDefaults('callout', markup)]);
-        returnToNavTool();
       }
     },
-    onCancel: () => {
-      pv.clearSvg();
-      if (!existing) returnToNavTool();
-    },
+    onCancel: () => pv.clearSvg(),
   });
 }
 

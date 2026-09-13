@@ -1,8 +1,22 @@
 import { PDFDocument, rgb, StandardFonts, BlendMode, LineCapStyle, degrees } from 'pdf-lib';
 import type { PDFFont, Color } from 'pdf-lib';
-import type { ArrowHead, PdfDocumentState, Markup, PageDefaults, Point } from '../state/types';
+import type {
+  ArrowHead,
+  PdfDocumentState,
+  Markup,
+  PageDefaults,
+  Point,
+  TextParagraph,
+} from '../state/types';
 import { META_KEY } from './importMarkups';
-import { HIGHLIGHT_COLOR, resolveStyle } from '../markups/draw';
+import { HIGHLIGHT_COLOR, blockStyleOf, paragraphsOf, resolveStyle } from '../markups/draw';
+import {
+  alignOffset,
+  blockTop,
+  layoutParagraphs,
+  resolveParagraphs,
+  type BlockStyle,
+} from '../markups/textLayout';
 import {
   angleDegrees,
   arrowBarbs,
@@ -144,64 +158,63 @@ function drawCenteredLabel(
 }
 
 /** Map UI font families onto the 14 PDF standard fonts. Arial is the default. */
-const FONT_MAP: Record<string, { regular: StandardFonts; bold: StandardFonts }> = {
-  Arial: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
-  Helvetica: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
-  Verdana: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold },
-  'Times New Roman': { regular: StandardFonts.TimesRoman, bold: StandardFonts.TimesRomanBold },
-  Georgia: { regular: StandardFonts.TimesRoman, bold: StandardFonts.TimesRomanBold },
-  'Courier New': { regular: StandardFonts.Courier, bold: StandardFonts.CourierBold },
+interface FontFaces {
+  regular: StandardFonts;
+  bold: StandardFonts;
+  italic: StandardFonts;
+  boldItalic: StandardFonts;
+}
+
+const FONT_MAP: Record<string, FontFaces> = {
+  Arial: {
+    regular: StandardFonts.Helvetica,
+    bold: StandardFonts.HelveticaBold,
+    italic: StandardFonts.HelveticaOblique,
+    boldItalic: StandardFonts.HelveticaBoldOblique,
+  },
+  Helvetica: {
+    regular: StandardFonts.Helvetica,
+    bold: StandardFonts.HelveticaBold,
+    italic: StandardFonts.HelveticaOblique,
+    boldItalic: StandardFonts.HelveticaBoldOblique,
+  },
+  Verdana: {
+    regular: StandardFonts.Helvetica,
+    bold: StandardFonts.HelveticaBold,
+    italic: StandardFonts.HelveticaOblique,
+    boldItalic: StandardFonts.HelveticaBoldOblique,
+  },
+  'Times New Roman': {
+    regular: StandardFonts.TimesRoman,
+    bold: StandardFonts.TimesRomanBold,
+    italic: StandardFonts.TimesRomanItalic,
+    boldItalic: StandardFonts.TimesRomanBoldItalic,
+  },
+  Georgia: {
+    regular: StandardFonts.TimesRoman,
+    bold: StandardFonts.TimesRomanBold,
+    italic: StandardFonts.TimesRomanItalic,
+    boldItalic: StandardFonts.TimesRomanBoldItalic,
+  },
+  'Courier New': {
+    regular: StandardFonts.Courier,
+    bold: StandardFonts.CourierBold,
+    italic: StandardFonts.CourierOblique,
+    boldItalic: StandardFonts.CourierBoldOblique,
+  },
 };
 
 type FontCache = Map<StandardFonts, PDFFont>;
 
-/** Wrap text to `maxWidth` using the embedded font's metrics — same behavior
- *  as the canvas renderer (word wrap, and words wider than a line are broken
- *  mid-word). pdf-lib's drawText only breaks at \n, never wraps on its own. */
-function wrapPdfLines(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
-  const width = (s: string): number => font.widthOfTextAtSize(s, size);
-  const lines: string[] = [];
-  for (const para of text.split('\n')) {
-    let line = '';
-    for (let word of para.split(' ')) {
-      while (width(word) > maxWidth && word.length > 1) {
-        if (line && width(`${line} ${word[0]}`) > maxWidth) {
-          lines.push(line);
-          line = '';
-        }
-        const base = line ? `${line} ` : '';
-        let lo = 1;
-        let hi = word.length - 1;
-        let fit = 1;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (width(base + word.slice(0, mid)) <= maxWidth) {
-            fit = mid;
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-        lines.push(base + word.slice(0, fit));
-        line = '';
-        word = word.slice(fit);
-      }
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && width(candidate) > maxWidth) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
-      }
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-
-async function getFont(pdf: PDFDocument, cache: FontCache, family?: string, bold = false): Promise<PDFFont> {
+async function getFont(
+  pdf: PDFDocument,
+  cache: FontCache,
+  family?: string,
+  bold = false,
+  italic = false,
+): Promise<PDFFont> {
   const entry = FONT_MAP[family ?? 'Arial'] ?? FONT_MAP.Arial!;
-  const std = bold ? entry.bold : entry.regular;
+  const std = bold && italic ? entry.boldItalic : bold ? entry.bold : italic ? entry.italic : entry.regular;
   let font = cache.get(std);
   if (!font) {
     font = await pdf.embedFont(std);
@@ -210,57 +223,87 @@ async function getFont(pdf: PDFDocument, cache: FontCache, family?: string, bold
   return font;
 }
 
-/** One indent step in page points — keep in sync with INDENT_STEP in draw.ts. */
-const PDF_INDENT_STEP = 12;
-
-interface TextFormatting {
-  underline: boolean;
-  indent: number;
-  align: 'left' | 'center' | 'right';
-  valign: 'top' | 'middle' | 'bottom';
+/** Pre-loaded faces for one box, so layout can measure any paragraph without
+ *  awaiting inside the measure callback. */
+interface BoxFonts {
+  regular: PDFFont;
+  bold: PDFFont;
+  italic: PDFFont;
+  boldItalic: PDFFont;
 }
 
-/** Wrapped, aligned text inside a box (PDF coords, y-up; box.y = bottom edge).
- *  Drawn line by line so horizontal/vertical alignment and underline match
- *  the on-screen rendering. */
-function drawFormattedText(
-  page: ReturnType<PDFDocument['getPage']>,
-  font: PDFFont,
-  content: string,
+function faceFor(fonts: BoxFonts, bold: boolean, italic: boolean): PDFFont {
+  if (bold && italic) return fonts.boldItalic;
+  if (bold) return fonts.bold;
+  if (italic) return fonts.italic;
+  return fonts.regular;
+}
+
+async function loadBoxFonts(pdf: PDFDocument, cache: FontCache, family: string): Promise<BoxFonts> {
+  return {
+    regular: await getFont(pdf, cache, family, false, false),
+    bold: await getFont(pdf, cache, family, true, false),
+    italic: await getFont(pdf, cache, family, false, true),
+    boldItalic: await getFont(pdf, cache, family, true, true),
+  };
+}
+
+/**
+ * Draw a box's paragraphs (PDF coords, y-up; box.y = bottom edge).
+ *
+ * Layout comes from markups/textLayout, the same engine the canvas uses, so
+ * mixed sizes, list markers, hanging indents, per-paragraph alignment and the
+ * box margin all land where they do on screen. Only measurement differs: the
+ * embedded font's metrics here, the canvas's there.
+ */
+function drawParagraphs(
+  page: PdfPage,
+  fonts: BoxFonts,
+  paras: TextParagraph[],
   box: { x: number; y: number; w: number; h: number },
-  pad: number,
-  fontSize: number,
-  lineSpacing: number,
-  color: ReturnType<typeof rgb>,
-  fmt: TextFormatting,
+  block: BlockStyle,
+  color: Color,
+  opacity: number,
 ): void {
-  const indent = fmt.indent * PDF_INDENT_STEP;
-  const availW = Math.max(20, box.w - pad * 2 - indent);
-  const lines = wrapPdfLines(font, content, fontSize, availW);
-  const lineH = fontSize * lineSpacing;
-  const blockH = lines.length * lineH;
-  const boxTop = box.y + box.h;
-  // Top edge of the text block per vertical alignment (never above the pad)
-  const blockTop =
-    fmt.valign === 'middle'
-      ? Math.min(boxTop - pad, box.y + (box.h + blockH) / 2)
-      : fmt.valign === 'bottom'
-        ? Math.min(boxTop - pad, box.y + pad + blockH)
-        : boxTop - pad;
-  const left = box.x + pad + indent;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const lw = font.widthOfTextAtSize(line, fontSize);
-    const lx =
-      fmt.align === 'center' ? left + (availW - lw) / 2 : fmt.align === 'right' ? left + availW - lw : left;
-    const baseline = blockTop - fontSize * 0.85 - i * lineH;
-    page.drawText(line, { x: lx, y: baseline, size: fontSize, font, color });
-    if (fmt.underline && line.trim()) {
-      page.drawLine({
-        start: { x: lx, y: baseline - fontSize * 0.12 },
-        end: { x: lx + lw, y: baseline - fontSize * 0.12 },
-        thickness: Math.max(0.5, fontSize * 0.06),
+  const measure = (t: string, size: number, bold: boolean, italic: boolean): number =>
+    faceFor(fonts, bold, italic).widthOfTextAtSize(t, size);
+  const availW = Math.max(20, box.w - block.margin * 2);
+  const resolved = resolveParagraphs(paras, block);
+  const { lines, height } = layoutParagraphs(resolved, availW, block.lineSpacing, measure);
+
+  // blockTop works downward from the box top; PDF space is y-up, so convert
+  const topDown = blockTop(0, box.h, height, block.margin, block.valign);
+  const boxTopY = box.y + box.h;
+  const left = box.x + block.margin;
+
+  for (const line of lines) {
+    const face = faceFor(fonts, line.bold, line.italic);
+    const lw = face.widthOfTextAtSize(line.text, line.size);
+    const dx = alignOffset(line, lw);
+    const lx = left + line.x + dx;
+    // Line box top -> text baseline
+    const baseline = boxTopY - topDown - line.y - line.size * 0.85;
+    if (line.marker) {
+      const mw = face.widthOfTextAtSize(line.marker, line.size);
+      page.drawText(line.marker, {
+        x: left + line.x - mw - line.size * 0.45,
+        y: baseline,
+        size: line.size,
+        font: face,
         color,
+        opacity,
+      });
+    }
+    if (line.text) {
+      page.drawText(line.text, { x: lx, y: baseline, size: line.size, font: face, color, opacity });
+    }
+    if (line.underline && line.text.trim()) {
+      page.drawLine({
+        start: { x: lx, y: baseline - line.size * 0.12 },
+        end: { x: lx + lw, y: baseline - line.size * 0.12 },
+        thickness: Math.max(0.5, line.size * 0.06),
+        color,
+        opacity,
       });
     }
   }
@@ -561,13 +604,8 @@ async function embedMarkup(
         { x: box.x + box.w, y: box.y + box.h },
         { x: box.x, y: box.y + box.h },
       ], true);
-      const font = await getFont(pdf, fonts, style.fontFamily, style.bold);
-      drawFormattedText(page, font, markup.content, box, 3, fontSize, style.lineSpacing, textColor, {
-        underline: style.underline,
-        indent: style.indent,
-        align: style.align,
-        valign: style.valign,
-      });
+      const boxFonts = await loadBoxFonts(pdf, fonts, style.fontFamily);
+      drawParagraphs(page, boxFonts, paragraphsOf(markup), box, blockStyleOf(style), textColor, lineOpacity);
       break;
     }
 
@@ -608,13 +646,8 @@ async function embedMarkup(
         multiply,
       });
       if (style.border) line(corners, true);
-      const font = await getFont(pdf, fonts, style.fontFamily, style.bold);
-      drawFormattedText(page, font, markup.content, box, 4, fontSize, style.lineSpacing, textColor, {
-        underline: style.underline,
-        indent: style.indent,
-        align: style.align,
-        valign: style.valign,
-      });
+      const boxFonts = await loadBoxFonts(pdf, fonts, style.fontFamily);
+      drawParagraphs(page, boxFonts, paragraphsOf(markup), box, blockStyleOf(style), textColor, lineOpacity);
       break;
     }
 

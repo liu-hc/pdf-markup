@@ -1334,6 +1334,73 @@ input, select, textarea, button {
   padding: 4px 5px;
 }
 
+/* ── Rich text editor (text boxes and callouts) ─────────────────────────
+   A contenteditable whose direct children are one .rtp per paragraph, each
+   carrying its own size/weight/slant/alignment/indent. The box-level values
+   (line spacing, inner margin, vertical alignment) live on the shell. */
+.rich-text-editor {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: #fffef5;
+  color: #1d1d1d;
+  border: 1.5px solid var(--selection);
+  border-radius: 2px;
+  font-size: var(--font-sm);
+  resize: both;
+  overflow: auto;
+  min-width: 100px;
+  min-height: 28px;
+  box-shadow: 0 2px 12px rgba(26, 41, 64, 0.3);
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Bare variant — types directly inside the callout/text box drawn beneath */
+.rich-text-editor--bare {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.rich-text-editor .rtp {
+  min-height: 1em;
+}
+
+/* A list item hangs: the marker sits in the left padding so wrapped lines
+   line up under the text rather than under the bullet. */
+.rich-text-editor .rtp-list {
+  position: relative;
+}
+
+.rich-text-editor .rtp-list::before {
+  content: attr(data-marker);
+  position: absolute;
+  left: 0;
+  transform: translateX(calc(-100% - var(--marker-gap, 4px)));
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* Room for the markers to hang into */
+.rich-text-editor .rtp-list {
+  margin-left: 1.6em;
+}
+
+.tfb-size,
+.tfb-margin {
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid var(--chrome-border-2);
+  background: var(--chrome-3);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-xs);
+  padding: 0 2px;
+}
+
 /* Formatting toolbar floating above the inline editor */
 .text-format-bar {
   position: absolute;
@@ -2445,4 +2512,12 @@ body.grabbing * {
   min-height: 15px;
   font-size: var(--font-sm);
   color: #ff8a8a;
+}
+
+/* Note under the box-level text controls, pointing at the in-box editor */
+.prop-hint {
+  margin: 6px 2px 2px;
+  font-size: var(--font-xs);
+  line-height: 1.45;
+  color: var(--text-3);
 }

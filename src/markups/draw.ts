@@ -4,6 +4,7 @@ import type {
   Point,
   ArrowHead,
   LineStyle,
+  TextParagraph,
 } from '../state/types';
 import {
   polygonArea,
@@ -21,6 +22,15 @@ import {
   CLOUD_ARC_R,
 } from '../util/geometry';
 import { formatLength, formatArea, formatAngle } from '../util/units';
+import {
+  alignOffset,
+  blockTop,
+  layoutParagraphs,
+  paragraphsFromText,
+  resolveMargin,
+  resolveParagraphs,
+  type BlockStyle,
+} from './textLayout';
 
 export interface DrawStyle {
   stroke: string;
@@ -40,15 +50,17 @@ export interface DrawStyle {
   fontFamily: string;
   lineSpacing: number;
   bold: boolean;
+  italic: boolean;
   underline: boolean;
   /** Block left indent, in steps of INDENT_STEP pt. */
   indent: number;
+  /** Inner padding of a text/callout box, in points. */
+  margin: number;
   align: 'left' | 'center' | 'right';
   valign: 'top' | 'middle' | 'bottom';
 }
 
-/** One indent step in page points. */
-export const INDENT_STEP = 12;
+export { INDENT_STEP } from './textLayout';
 
 /** Fallback highlighter colour, shared with the tool that creates them. */
 export const HIGHLIGHT_COLOR = '#f5c542';
@@ -70,7 +82,9 @@ export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle 
     fontFamily: markup.overrides?.fontFamily ?? defaults.fontFamily ?? 'Arial',
     lineSpacing: markup.overrides?.lineSpacing ?? 1.35,
     bold: markup.overrides?.bold ?? false,
+    italic: markup.overrides?.italic ?? false,
     underline: markup.overrides?.underline ?? false,
+    margin: resolveMargin(markup.overrides?.margin),
     indent: markup.overrides?.indent ?? 0,
     align: markup.overrides?.align ?? 'left',
     valign: markup.overrides?.valign ?? 'top',
@@ -78,8 +92,8 @@ export function resolveStyle(markup: Markup, defaults: PageDefaults): DrawStyle 
 }
 
 /** Canvas font shorthand — quoted family with a sans-serif fallback. */
-function canvasFont(sizePx: number, family: string, bold = false): string {
-  return `${bold ? '700 ' : ''}${sizePx}px "${family}", sans-serif`;
+function canvasFont(sizePx: number, family: string, bold = false, italic = false): string {
+  return `${italic ? 'italic ' : ''}${bold ? '700 ' : ''}${sizePx}px "${family}", sans-serif`;
 }
 
 /** Markup types that paint an enclosed infill (the only ones the multiply
@@ -436,7 +450,7 @@ export function drawMarkupOnCanvas(
       ctx.beginPath();
       ctx.rect(x, y, markup.width * scale, markup.height * scale);
       ctx.clip();
-      drawTextBlock(ctx, markup.content, x, y, markup.width * scale, markup.height * scale, 3 * scale, style, scale);
+      drawTextBlock(ctx, paragraphsOf(markup), x, y, markup.width * scale, markup.height * scale, style, scale);
       ctx.restore();
       break;
     }
@@ -490,7 +504,7 @@ export function drawMarkupOnCanvas(
       ctx.beginPath();
       ctx.rect(bx, by, bw, bh);
       ctx.clip();
-      drawTextBlock(ctx, markup.content, bx, by, bw, bh, 4 * scale, style, scale);
+      drawTextBlock(ctx, paragraphsOf(markup), bx, by, bw, bh, style, scale);
       ctx.restore();
       break;
     }
@@ -626,93 +640,79 @@ function drawCenteredLabel(
   ctx.restore();
 }
 
-/** Break text into lines that fit `maxWidth`: wraps between words, and words
- *  wider than a whole line are broken mid-word so nothing can escape the box. */
-function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  const lines: string[] = [];
-  for (const para of text.split('\n')) {
-    let line = '';
-    for (let word of para.split(' ')) {
-      // A word wider than the whole line: emit fitting chunks of it
-      while (ctx.measureText(word).width > maxWidth && word.length > 1) {
-        if (line && ctx.measureText(`${line} ${word[0]}`).width > maxWidth) {
-          lines.push(line);
-          line = '';
-        }
-        const base = line ? `${line} ` : '';
-        // Largest prefix of the word that still fits on this line
-        let lo = 1;
-        let hi = word.length - 1;
-        let fit = 1;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (ctx.measureText(base + word.slice(0, mid)).width <= maxWidth) {
-            fit = mid;
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-        lines.push(base + word.slice(0, fit));
-        line = '';
-        word = word.slice(fit);
-      }
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && ctx.measureText(candidate).width > maxWidth) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
-      }
-    }
-    lines.push(line);
-  }
-  return lines;
-}
 
 /** Formatted text block inside a box (screen px): word-wrap, block indent,
  *  horizontal + vertical alignment, bold and underline. `pad` is the inner
  *  padding on every side. */
+/** Box-level fallbacks a paragraph inherits. */
+export function blockStyleOf(style: DrawStyle): BlockStyle {
+  return {
+    fontSize: style.fontSize,
+    fontFamily: style.fontFamily,
+    lineSpacing: style.lineSpacing,
+    bold: style.bold,
+    italic: style.italic,
+    underline: style.underline,
+    indent: style.indent,
+    align: style.align,
+    valign: style.valign,
+    margin: style.margin,
+  };
+}
+
+/** The paragraphs a markup renders: its own when it has them, otherwise its
+ *  plain text split on newlines — which is what every box made before
+ *  per-paragraph formatting looks like. */
+export function paragraphsOf(markup: Markup): TextParagraph[] {
+  const withParas = markup as { paragraphs?: TextParagraph[]; content?: string };
+  if (withParas.paragraphs?.length) return withParas.paragraphs;
+  return paragraphsFromText(withParas.content ?? '');
+}
+
+/** Formatted text inside a box (screen px). Paragraph sizes, weights, slants,
+ *  alignments, indents and list markers all come from the shared layout
+ *  engine, so this matches the PDF exporter line for line. */
 function drawTextBlock(
   ctx: CanvasRenderingContext2D,
-  text: string,
+  paras: TextParagraph[],
   bx: number,
   by: number,
   bw: number,
   bh: number,
-  pad: number,
   style: DrawStyle,
   scale: number,
 ): void {
-  const fontSize = style.fontSize * scale;
-  const indent = style.indent * INDENT_STEP * scale;
-  const availW = Math.max(20, bw - pad * 2 - indent);
-  ctx.font = canvasFont(fontSize, style.fontFamily, style.bold);
+  const block = blockStyleOf(style);
+  const margin = style.margin * scale;
+  const availW = Math.max(20, bw - margin * 2);
+  const measure = (t: string, size: number, bold: boolean, italic: boolean): number => {
+    ctx.font = canvasFont(size * scale, style.fontFamily, bold, italic);
+    return ctx.measureText(t).width;
+  };
+  const resolved = resolveParagraphs(paras, block);
+  const { lines, height } = layoutParagraphs(resolved, availW / scale, style.lineSpacing, measure);
+
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
-  const lineHeight = fontSize * style.lineSpacing;
-  const lines = wrapLines(ctx, text, availW);
-  const blockH = lines.length * lineHeight;
-  let cy =
-    style.valign === 'middle'
-      ? by + Math.max(pad, (bh - blockH) / 2)
-      : style.valign === 'bottom'
-        ? by + Math.max(pad, bh - pad - blockH)
-        : by + pad;
-  const left = bx + pad + indent;
+  const top = blockTop(by, bh, height * scale, margin, style.valign);
+  const left = bx + margin;
+
   for (const line of lines) {
-    const lw = ctx.measureText(line).width;
-    const lx =
-      style.align === 'center'
-        ? left + (availW - lw) / 2
-        : style.align === 'right'
-          ? left + availW - lw
-          : left;
-    ctx.fillText(line, lx, cy);
-    if (style.underline && line.trim()) {
-      ctx.fillRect(lx, cy + fontSize * 0.95, lw, Math.max(1, fontSize * 0.06));
+    const fontPx = line.size * scale;
+    ctx.font = canvasFont(fontPx, style.fontFamily, line.bold, line.italic);
+    const lw = ctx.measureText(line.text).width;
+    const dx = alignOffset(line, lw / scale) * scale;
+    const lx = left + line.x * scale + dx;
+    const ly = top + line.y * scale;
+    // The marker sits at the paragraph indent, outside the hanging text column
+    if (line.marker) {
+      const mw = ctx.measureText(line.marker).width;
+      ctx.fillText(line.marker, left + line.x * scale - mw - fontPx * 0.45, ly);
     }
-    cy += lineHeight;
+    ctx.fillText(line.text, lx, ly);
+    if (line.underline && line.text.trim()) {
+      ctx.fillRect(lx, ly + fontPx * 0.95, lw, Math.max(1, fontPx * 0.06));
+    }
   }
 }
 
@@ -721,21 +721,25 @@ let _measureCtx: CanvasRenderingContext2D | null = null;
 /** Height the wrapped text needs at the given width — same wrap logic as the
  *  canvas renderer, so text/callout boxes can auto-grow to fit on commit.
  *  All values in page units (pt). */
-export function measureTextBlockHeight(
-  text: string,
+/** Height the paragraphs need at the given width, in page points — the same
+ *  layout the renderer uses, so a box auto-grown on commit fits exactly what
+ *  gets drawn into it. */
+export function measureParagraphHeight(
+  paras: TextParagraph[],
   maxWidth: number,
-  fontSize: number,
-  fontFamily = 'Arial',
-  lineSpacing = 1.35,
-  bold = false,
-  indentSteps = 0,
+  block: BlockStyle,
 ): number {
   if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
-  if (!_measureCtx) return fontSize * lineSpacing;
-  _measureCtx.font = canvasFont(fontSize, fontFamily, bold);
-  const lines = wrapLines(_measureCtx, text, Math.max(20, maxWidth - indentSteps * INDENT_STEP));
-  return lines.length * fontSize * lineSpacing;
+  const ctx = _measureCtx;
+  if (!ctx) return block.fontSize * block.lineSpacing;
+  const measure = (t: string, size: number, bold: boolean, italic: boolean): number => {
+    ctx.font = canvasFont(size, block.fontFamily, bold, italic);
+    return ctx.measureText(t).width;
+  };
+  const resolved = resolveParagraphs(paras, block);
+  return layoutParagraphs(resolved, Math.max(20, maxWidth), block.lineSpacing, measure).height;
 }
+
 
 function drawLabel(
   ctx: CanvasRenderingContext2D,

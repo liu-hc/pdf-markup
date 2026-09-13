@@ -16,7 +16,7 @@ import { applyPageOrder } from '../markups/order';
 // what made the polygon "Show area" tick box flick itself back off.
 import { applyMarkupChange, clearHistory } from '../state/undo';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, HIGHLIGHT_WIDTH_OPTIONS, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
+import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COLORS, FONT_FAMILIES, LINE_SPACING_OPTIONS, LINE_WEIGHT_OPTIONS, HIGHLIGHT_WIDTH_OPTIONS, TEXT_MARGIN_OPTIONS, DEFAULT_TEXT_MARGIN, TEXT_SIZE_OPTIONS, AREA_DECIMAL_OPTIONS, ARROW_SIZE_OPTIONS, DEFAULT_COLOR } from '../state/types';
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction, HIGHLIGHT_SEED, HL_PEN_WIDTH } from '../tools/controller';
@@ -589,6 +589,7 @@ function showHelpDialog(): void {
       ${fig(guideAnnotate, 'Annotation tools: text box, callout, sticky note')}
       <ul>
         <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
+        <li><strong>Paragraph formatting</strong> — the toolbar above a box being edited formats the paragraphs you have selected, so one box can hold a large bold heading, body text and a list. It offers text size, <strong>bold</strong>, <em>italic</em>, underline, four list styles (bullet •, circle ○, numbered 1. and lettered a.), indent, and per-paragraph alignment. Numbering restarts whenever the run breaks, so two lists in one box each start at 1. Its right-hand half sets the whole box: vertical alignment, line spacing and inner margin — those three also live in the properties panel.</li>
         <li><strong>Callout (Q)</strong> — two clicks: arrow tip → text box, then type. The leader exits the box horizontally (default 25pt flat run) and bends at the elbow, which keeps its own drag handle for adjusting the distance.</li>
         <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
       </ul>
@@ -2324,11 +2325,19 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     if (m.type === 'text' || m.type === 'callout') {
       const lineSpacing = m.overrides?.lineSpacing ?? 1.35;
       const border = m.overrides?.border ?? true;
+      const margin = m.overrides?.margin ?? DEFAULT_TEXT_MARGIN;
+      // Box-level only. Per-paragraph formatting — size, bold, italic,
+      // underline, lists, indent, alignment — is set in the box itself, where
+      // it can apply to just the paragraphs you select.
       textSection += `
     <label>Border <input type="checkbox" data-override-flag="border" ${border ? 'checked' : ''} title="Draw the box outline"></label>
     <label>Line spacing <select data-prop="lineSpacing">
       ${LINE_SPACING_OPTIONS.map((s) => `<option value="${s}" ${s === lineSpacing ? 'selected' : ''}>${s === 1 ? 'Single' : s === 2 ? 'Double' : s}</option>`).join('')}
-    </select></label>`;
+    </select></label>
+    <label>Margin <select data-prop="margin" title="Inner padding between the box edge and its text">
+      ${TEXT_MARGIN_OPTIONS.map((v) => `<option value="${v}" ${v === margin ? 'selected' : ''}>${v} pt</option>`).join('')}
+    </select></label>
+    <p class="prop-hint">Double-click the box to set sizes, bold/italic, lists and indents per paragraph.</p>`;
     }
   }
 
@@ -2534,7 +2543,7 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
         return write({ penWidth: Number(rawValue) }, 'Edit properties');
       }
 
-      const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing'];
+      const numeric = ['lineWeight', 'opacity', 'fillOpacity', 'fontSize', 'lineSpacing', 'margin'];
       setOverride(prop, numeric.includes(prop) ? Number(rawValue) : rawValue);
     });
   });

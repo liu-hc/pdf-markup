@@ -62,7 +62,10 @@ export interface AppearanceOverrides {
   lineSpacing?: number;
   /** Text/callout block formatting (set from the inline-editor toolbar). */
   bold?: boolean;
+  italic?: boolean;
   underline?: boolean;
+  /** Inner padding of a text/callout box, in points. */
+  margin?: number;
   /** Block left indent, in steps of 12pt. */
   indent?: number;
   align?: 'left' | 'center' | 'right';
@@ -170,6 +173,32 @@ export interface LineMarkup extends MarkupBase {
   customLabel?: string;
 }
 
+/** Leading marker for a list paragraph. */
+export type ListStyle = 'none' | 'bullet' | 'circle' | 'number' | 'letter';
+
+/** One paragraph of a text box or callout.
+ *
+ *  Formatting splits by scope: what belongs to a RUN OF TEXT lives here
+ *  (size, weight, slant, its own alignment, indent and list marker), while
+ *  what belongs to the BOX — line spacing, inner margin, vertical alignment,
+ *  font family, colour — stays in the markup's overrides. Each field falls
+ *  back to the box value when unset, so a paragraph only records what it
+ *  actually changes. */
+export interface TextParagraph {
+  text: string;
+  /** Point size. Unset = the box's font size. */
+  size?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  align?: 'left' | 'center' | 'right';
+  /** Left indent in steps of 12pt. */
+  indent?: number;
+  /** Leading marker. Numbers and letters count within a run of adjacent
+   *  paragraphs sharing the same style and indent. */
+  list?: ListStyle;
+}
+
 export interface TextMarkup extends MarkupBase {
   type: 'text';
   x: number;
@@ -177,6 +206,12 @@ export interface TextMarkup extends MarkupBase {
   width: number;
   height: number;
   content: string;
+  /** Per-paragraph formatting. Unset on markups made before rich text
+   *  existed — those render from `content` split on newlines, using the box
+   *  formatting, which is exactly how they looked before. `content` is always
+   *  kept in sync as the plain text, so search and the markups list need to
+   *  know nothing about paragraphs. */
+  paragraphs?: TextParagraph[];
 }
 
 export interface CalloutMarkup extends MarkupBase {
@@ -196,6 +231,8 @@ export interface CalloutMarkup extends MarkupBase {
    *  box edge toward the elbow and bends at (kinkX, kinkY). When undefined the
    *  elbow stays on the box mid-height (legacy single-axis behaviour). */
   kinkY?: number;
+  /** Per-paragraph formatting — see TextMarkup.paragraphs. */
+  paragraphs?: TextParagraph[];
 }
 
 export interface StickyMarkup extends MarkupBase {
@@ -384,6 +421,12 @@ export const FONT_FAMILIES = [
 ];
 
 export const LINE_SPACING_OPTIONS = [1, 1.15, 1.35, 1.5, 2];
+
+/** Inner padding presets (pt) for a text box or callout. */
+export const TEXT_MARGIN_OPTIONS = [0, 2, 4, 6, 8, 12, 16, 24];
+
+/** Default inner padding (pt) when a box does not set its own. */
+export const DEFAULT_TEXT_MARGIN = 4;
 
 /** "Canvas original" scale — 1 paper inch reads as 1 real inch. */
 export const FULL_SCALE_LABEL = '1:1';
