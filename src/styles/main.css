@@ -1655,12 +1655,30 @@ body.grabbing * {
 }
 
 .zoom-label,
+/* An input, so a page number can be typed straight into it */
 .page-label {
   color: var(--text);
+  font-family: inherit;
   font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
-  min-width: 40px;
+  width: 58px;
   text-align: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 1px 2px;
+  cursor: text;
+  transition: background var(--t), border-color var(--t);
+}
+
+.page-label:hover {
+  background: var(--hover);
+}
+
+.page-label:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--accent-bright);
 }
 
 /* ── Right panel — properties & markups ────────────────────────────────── */
@@ -2596,4 +2614,31 @@ body.grabbing * {
   font-size: var(--font-xs);
   line-height: 1.45;
   color: var(--text-3);
+}
+
+/* "Set as Page Default" — foot of the properties panel */
+.prop-set-default {
+  margin: 14px 2px 4px;
+  padding: 7px 10px;
+  width: calc(100% - 4px);
+  border: 1px solid var(--chrome-border-2);
+  border-radius: 8px;
+  background: var(--chrome-3);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-sm);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t), color var(--t);
+}
+
+.prop-set-default:hover {
+  background: var(--chrome-4);
+  border-color: var(--accent-bright);
+}
+
+.prop-set-default.saved {
+  background: var(--accent);
+  border-color: var(--accent-bright);
+  color: #fff;
 }

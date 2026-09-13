@@ -8,7 +8,7 @@ import {
   closeDocument,
   uid,
 } from '../state/store';
-import type { ToolId, LineStyle, Markup, BookmarkItem, OverlaySlot, ToolDefaults } from '../state/types';
+import type { ToolId, Markup, BookmarkItem, OverlaySlot, ToolDefaults } from '../state/types';
 import { applyPageOrder } from '../markups/order';
 // Static, deliberately: a property edit must land in the same tick as the
 // click. Behind a dynamic import it didn't, and any re-render in the gap
@@ -20,6 +20,7 @@ import { TOOL_MARKUP_TYPE, ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL, SWATCH_COL
 import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction, HIGHLIGHT_SEED, HL_PEN_WIDTH } from '../tools/controller';
+import { resolveStyle } from '../markups/draw';
 import { scaleFactorForLabel } from '../util/geometry';
 import { getSnapIndexSync, isSnapLoading } from '../pdf/vectorSnap';
 // User-guide illustrations (shared with the README)
@@ -159,7 +160,7 @@ export function buildAppShell(workspace: Workspace, secondaryWorkspace: Workspac
       </aside>
       <div class="canvas-hud">
         <button type="button" class="hud-scale" title="Set the drawing scale for this page">Scale: None</button>
-        <div class="hud-page"><button class="page-prev">‹</button><span class="page-label">0/0</span><button class="page-next">›</button></div>
+        <div class="hud-page"><button class="page-prev">‹</button><input type="text" class="page-label" value="0/0" inputmode="numeric" autocomplete="off" spellcheck="false" title="Type a page number and press Enter"><button class="page-next">›</button></div>
         <div class="hud-zoom"><button data-zoom="fit">Fit</button><button data-zoom="out">−</button><span class="zoom-label">100%</span><button data-zoom="in">+</button></div>
       </div>
       <div class="panel-peek-zone left" aria-hidden="true"></div>
@@ -736,95 +737,6 @@ function wireRibbon(root: HTMLElement): void {
   editGroup.appendChild(editTools);
   ribbon.appendChild(editGroup);
 
-  const pageGroup = document.createElement('div');
-  pageGroup.className = 'ribbon-group page-defaults';
-  const pd = document.createElement('div');
-  pd.className = 'page-default-controls';
-  // Order: Text (size), Weight, Style, Scale, Line / Fill / Text colors
-  pd.innerHTML = `
-    <label>Text <select class="text-size">${TEXT_SIZE_OPTIONS.map((s) => `<option value="${s}" ${s === 12 ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
-    <label>Weight <select class="line-weight">${LINE_WEIGHT_OPTIONS.map((w) => `<option value="${w}" ${w === 1 ? 'selected' : ''}>${w}</option>`).join('')}<option value="custom">Custom…</option></select></label>
-    <label>Style <select class="line-style"><option value="solid">Solid</option><option value="dashed">Dash 1</option><option value="dotted">Dash 2</option><option value="centerline">Centerline</option><option value="cloud">Cloud</option></select></label>
-    <label>Line <button type="button" class="color-box stroke-color" title="Line color"></button></label>
-    <label>Fill <button type="button" class="color-box fill-color" title="Fill color"></button></label>
-    <label>Text <button type="button" class="color-box text-color" title="Text color"></button></label>
-  `;
-
-  pageGroup.appendChild(pd);
-  ribbon.appendChild(pageGroup);
-
-  // Overlay controls live in the ribbon: on the same row after the color
-  // boxes when there's room, wrapping to the next ribbon row when not.
-  const overlayGroup = document.createElement('div');
-  overlayGroup.className = 'ribbon-group overlay-bar hidden';
-  overlayGroup.innerHTML = `<span class="ribbon-label">Overlay</span><div class="overlay-controls"></div>`;
-  ribbon.appendChild(overlayGroup);
-
-
-  // Page-default color boxes open a palette popup (standard swatches + native
-  // "More colors…"), matching the property-panel palette.
-  const setPageColor = (key: 'strokeColor' | 'fillColor' | 'textColor', color: string): void => {
-    updateActiveDoc((d) => {
-      const defs = [...d.pageDefaults];
-      defs[d.currentPage] = { ...defs[d.currentPage]!, [key]: color };
-      return { ...d, pageDefaults: defs, dirty: true };
-    });
-  };
-  const wirePdColor = (cls: string, key: 'strokeColor' | 'fillColor' | 'textColor'): void => {
-    const btn = pd.querySelector<HTMLButtonElement>(`.${cls}`);
-    btn?.addEventListener('click', () => {
-      const cur = getActiveDoc()?.pageDefaults[getActiveDoc()!.currentPage]?.[key] ?? DEFAULT_COLOR;
-      openSwatchPopup(btn, cur ?? DEFAULT_COLOR, (color) => {
-        setPageColor(key, color);
-        btn.style.backgroundColor = color;
-      });
-    });
-  };
-  wirePdColor('stroke-color', 'strokeColor');
-  wirePdColor('fill-color', 'fillColor');
-  wirePdColor('text-color', 'textColor');
-
-  pd.querySelector('.text-size')?.addEventListener('change', (e) => {
-    const size = Number((e.target as HTMLSelectElement).value);
-    if (!Number.isFinite(size) || size < 1) return;
-    updateActiveDoc((d) => {
-      const defs = [...d.pageDefaults];
-      defs[d.currentPage] = { ...defs[d.currentPage]!, fontSize: size };
-      return { ...d, pageDefaults: defs, dirty: true };
-    });
-  });
-
-  pd.querySelector('.line-weight')?.addEventListener('change', (e) => {
-    const sel = e.target as HTMLSelectElement;
-    let weight: number;
-    if (sel.value === 'custom') {
-      const entered = prompt('Line weight (pt)', '1');
-      weight = entered ? Number(entered) : NaN;
-      if (!Number.isFinite(weight) || weight <= 0) {
-        // Restore the current value on cancel/invalid input
-        const cur = getActiveDoc()?.pageDefaults[getActiveDoc()!.currentPage]?.lineWeight ?? 1;
-        sel.value = LINE_WEIGHT_OPTIONS.includes(cur) ? String(cur) : 'custom';
-        return;
-      }
-    } else {
-      weight = Number(sel.value);
-    }
-    updateActiveDoc((d) => {
-      const defs = [...d.pageDefaults];
-      defs[d.currentPage] = { ...defs[d.currentPage]!, lineWeight: weight };
-      return { ...d, pageDefaults: defs, dirty: true };
-    });
-  });
-
-  pd.querySelector('.line-style')?.addEventListener('change', (e) => {
-    const style = (e.target as HTMLSelectElement).value as LineStyle;
-    updateActiveDoc((d) => {
-      const defs = [...d.pageDefaults];
-      defs[d.currentPage] = { ...defs[d.currentPage]!, lineStyle: style };
-      return { ...d, pageDefaults: defs, dirty: true };
-    });
-  });
-
   overlayBtn.addEventListener('click', () => {
     // Visibility + contents derive from state in renderChrome
     updateActiveDoc((d) => ({ ...d, overlayEnabled: !d.overlayEnabled }));
@@ -1342,6 +1254,32 @@ function wireHUDs(root: HTMLElement, ws: Workspace): void {
   const scaleChip = root.querySelector<HTMLElement>('.hud-scale');
   scaleChip?.addEventListener('click', () => openScalePopup(scaleChip));
 
+  // Type a page number to jump there. Shows "3 / 53" at rest; selecting all on
+  // focus means typing replaces it rather than editing around the total.
+  const pageBox = root.querySelector<HTMLInputElement>('.page-label');
+  const showCurrentPage = (): void => {
+    const doc = getActiveDoc();
+    if (doc && pageBox) pageBox.value = `${doc.currentPage + 1} / ${doc.pageCount}`;
+  };
+  pageBox?.addEventListener('focus', () => pageBox.select());
+  pageBox?.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // digits must not reach the tool shortcuts
+    if (e.key === 'Escape') {
+      showCurrentPage();
+      pageBox.blur();
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    const doc = getActiveDoc();
+    // Take the first number typed, so "12" and "12 / 53" both work
+    const n = Number(pageBox.value.trim().split(/[^\d]/)[0]);
+    if (doc && Number.isFinite(n) && n >= 1 && n <= doc.pageCount) ws.goToPage(n - 1);
+    showCurrentPage();
+    pageBox.blur();
+  });
+  // Leaving without committing puts the real page number back
+  pageBox?.addEventListener('blur', showCurrentPage);
+
   root.querySelector('.page-prev')?.addEventListener('click', () => {
     const doc = getActiveDoc();
     if (doc) ws.goToPage(Math.max(0, doc.currentPage - 1));
@@ -1468,27 +1406,11 @@ function renderChrome(root: HTMLElement, ws: Workspace, secondaryWs: Workspace):
   if (doc) {
     const defaults = doc.pageDefaults[doc.currentPage];
     root.querySelector('.hud-scale')!.textContent = `Scale: ${defaults?.scaleLabel ?? 'None'}`;
-    root.querySelector('.page-label')!.textContent = `${doc.currentPage + 1} / ${doc.pageCount}`;
-    root.querySelector('.zoom-label')!.textContent = `${Math.round(doc.zoom * 100)}%`;
-    // Sync ribbon Page Default controls with the active page's values
-    if (defaults) {
-      const sc = root.querySelector('.stroke-color') as HTMLElement | null;
-      if (sc) sc.style.backgroundColor = defaults.strokeColor;
-      const fc = root.querySelector('.fill-color') as HTMLElement | null;
-      if (fc) fc.style.backgroundColor = defaults.fillColor ?? DEFAULT_COLOR;
-      const tc = root.querySelector('.text-color') as HTMLElement | null;
-      if (tc) tc.style.backgroundColor = defaults.textColor;
-      const ts = root.querySelector('.text-size') as HTMLSelectElement | null;
-      if (ts && document.activeElement !== ts) ts.value = String(defaults.fontSize ?? 12);
-      const lw = root.querySelector('.line-weight') as HTMLSelectElement | null;
-      if (lw && document.activeElement !== lw) {
-        lw.value = LINE_WEIGHT_OPTIONS.includes(defaults.lineWeight)
-          ? String(defaults.lineWeight)
-          : 'custom';
-      }
-      const ls = root.querySelector('.line-style') as HTMLSelectElement | null;
-      if (ls && document.activeElement !== ls) ls.value = defaults.lineStyle;
+    const pageBox = root.querySelector<HTMLInputElement>('.page-label')!;
+    if (document.activeElement !== pageBox) {
+      pageBox.value = `${doc.currentPage + 1} / ${doc.pageCount}`;
     }
+    root.querySelector('.zoom-label')!.textContent = `${Math.round(doc.zoom * 100)}%`;
   }
 }
 
@@ -2492,6 +2414,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     ${textSection}
     ${measureToggle}
     ${dimSection}
+    <button type="button" class="prop-set-default" title="Use this markup's appearance for new markups on this page">Set as Page Default</button>
   </div>`;
 }
 
@@ -2611,6 +2534,38 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   const fillVal = props.querySelector<HTMLElement>('.fill-opacity-val');
   fillRange?.addEventListener('input', () => {
     if (fillVal) fillVal.textContent = `${Math.round(Number(fillRange.value) * 100)}%`;
+  });
+
+  // "Set as Page Default": take the appearance actually in front of the user —
+  // a selected markup's, or the armed tool's — and make it what new markups on
+  // this page start from. This replaces the row of page-default dropdowns that
+  // used to sit in the ribbon, where they were detached from anything visible.
+  props.querySelector<HTMLButtonElement>('.prop-set-default')?.addEventListener('click', (e) => {
+    const doc = getActiveDoc();
+    const m = subject();
+    if (!doc || !m) return;
+    const style = resolveStyle(m, doc.pageDefaults[doc.currentPage]!);
+    updateActiveDoc((d) => {
+      const defs = [...d.pageDefaults];
+      defs[d.currentPage] = {
+        ...defs[d.currentPage]!,
+        strokeColor: style.stroke,
+        fillColor: style.fill,
+        textColor: style.textColor,
+        lineWeight: style.lineWeight,
+        lineStyle: style.lineStyle,
+        fontSize: style.fontSize,
+        fontFamily: style.fontFamily,
+      };
+      return { ...d, pageDefaults: defs, dirty: true };
+    });
+    const btn = e.currentTarget as HTMLButtonElement;
+    btn.textContent = 'Saved as page default';
+    btn.classList.add('saved');
+    setTimeout(() => {
+      btn.textContent = 'Set as Page Default';
+      btn.classList.remove('saved');
+    }, 1400);
   });
 
   // Override dimension: ticking it seeds the typed value with whatever the
