@@ -140,9 +140,20 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
     const d = document.createElement('div');
     d.className = 'rtp';
     for (const [k, v] of Object.entries(attrs)) if (v !== undefined) d.dataset[k] = v;
-    d.textContent = text;
+    if (text) d.textContent = text;
+    else d.appendChild(document.createElement('br'));
     applyPara(d);
     return d;
+  };
+
+  /** An empty block has nowhere for the caret to sit, so Chrome refuses to put
+   *  it there — a new line would silently keep typing into the previous
+   *  paragraph. A filler <br> gives it somewhere to land; innerText reads it
+   *  back as nothing. */
+  const ensureFillers = (): void => {
+    for (const el of Array.from(root.children) as HTMLElement[]) {
+      if (!el.firstChild) el.appendChild(document.createElement('br'));
+    }
   };
 
   /** Recompute list markers. Numbering restarts when the run breaks, matching
@@ -188,26 +199,58 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
     );
   }
   applyBox();
+  ensureFillers();
   renumber();
 
   // ── which paragraphs the caret or selection touches
-  const selectedParas = (): HTMLElement[] => {
+  //
+  // A <select> in the toolbar has to take focus to open its list, which
+  // collapses the editor's selection before its change event fires. The
+  // buttons dodge that by preventing default on pointerdown, but a select
+  // cannot. So the last real selection is remembered while the editor has
+  // focus and used once focus has moved to a control — otherwise picking a
+  // size silently applied it to the first paragraph instead of the chosen
+  // ones.
+  let lastParas: HTMLElement[] = [];
+  let savedRange: Range | null = null;
+
+  const liveParas = (): HTMLElement[] => {
     const sel = window.getSelection();
     const all = paragraphs();
-    if (!sel || sel.rangeCount === 0) return all.slice(0, 1);
+    if (!sel || sel.rangeCount === 0 || !root.contains(sel.anchorNode)) return [];
     const range = sel.getRangeAt(0);
-    const hit = all.filter((el) => range.intersectsNode(el));
-    return hit.length ? hit : all.slice(0, 1);
+    return all.filter((el) => range.intersectsNode(el));
+  };
+
+  const selectedParas = (): HTMLElement[] => {
+    const live = liveParas();
+    if (live.length) return live;
+    const remembered = lastParas.filter((el) => el.parentElement === root);
+    return remembered.length ? remembered : paragraphs().slice(0, 1);
+  };
+
+  /** Hand focus and the selection back after a toolbar control took them. */
+  const restoreSelection = (): void => {
+    root.focus();
+    if (!savedRange) return;
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    try {
+      sel?.addRange(savedRange);
+    } catch {
+      /* the range's nodes were replaced — the caret just stays put */
+    }
   };
 
   let bar: HTMLElement | null = null;
   const syncers: (() => void)[] = [];
 
   const editParas = (fn: (el: HTMLElement) => void): void => {
-    selectedParas().forEach(fn);
+    const targets = selectedParas();
+    lastParas = targets;
+    targets.forEach(fn);
     renumber();
     syncers.forEach((f) => f());
-    root.focus();
   };
 
   // ── toolbar
@@ -261,6 +304,7 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
   sizeSel.addEventListener('change', () => {
     const v = sizeSel.value;
     editParas((el) => (el.dataset.size = v));
+    restoreSelection();
   });
   syncers.push(() => {
     const sel = selectedParas();
@@ -328,7 +372,7 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
   spacing.addEventListener('change', () => {
     boxFmt.lineSpacing = Number(spacing.value);
     applyBox();
-    root.focus();
+    restoreSelection();
   });
   bar.appendChild(spacing);
 
@@ -341,7 +385,7 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
   margin.addEventListener('change', () => {
     boxFmt.margin = Number(margin.value);
     applyBox();
-    root.focus();
+    restoreSelection();
   });
   bar.appendChild(margin);
 
@@ -349,6 +393,7 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
   bar.style.top = `${Math.max(2, opts.topPx - 34)}px`;
 
   // ── behaviour
+  let docDown: ((e: PointerEvent) => void) | null = null;
   let done = false;
   const finish = (commit: boolean): void => {
     if (done) return;
@@ -359,13 +404,21 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
     root.remove();
     bar?.remove();
     document.removeEventListener('selectionchange', onSelChange);
+    if (docDown) document.removeEventListener('pointerdown', docDown, true);
     const hasText = paras.some((p) => p.text.trim().length);
     if (commit && hasText) opts.onCommit(paras, w, h, boxFmt);
     else opts.onCancel();
   };
 
   const onSelChange = (): void => {
-    if (document.activeElement === root) syncers.forEach((f) => f());
+    if (document.activeElement !== root) return;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && root.contains(sel.anchorNode)) {
+      savedRange = sel.getRangeAt(0).cloneRange();
+      const live = liveParas();
+      if (live.length) lastParas = live;
+    }
+    syncers.forEach((f) => f());
   };
   document.addEventListener('selectionchange', onSelChange);
 
@@ -382,42 +435,104 @@ export function spawnRichTextEditor(opts: RichEditorOptions): () => void {
       return;
     }
     if (e.key === 'Enter') {
-      // Carry the current paragraph's formatting onto the new one, so a list
-      // keeps listing and a heading size does not leak into the body text
-      // unless the user asked for it.
+      // Handled here AND on beforeinput below. Whichever fires first cancels
+      // the default, which suppresses the other — so a newline can never split
+      // twice, and never fails to split because only one of the two arrived.
       e.preventDefault();
-      const cur = selectedParas()[0];
-      const attrs: Record<string, string> = {};
-      if (cur) {
-        for (const k of ['size', 'bold', 'italic', 'underline', 'align', 'indent', 'list'] as const) {
-          const v = cur.dataset[k];
-          if (v !== undefined) attrs[k] = v;
-        }
-      }
-      const next = newPara(attrs);
-      if (cur?.nextSibling) root.insertBefore(next, cur.nextSibling);
-      else root.appendChild(next);
-      renumber();
-      const range = document.createRange();
-      range.setStart(next, 0);
-      range.collapse(true);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-      syncers.forEach((f) => f());
+      splitParagraph();
     }
   });
+
+  /** Start a new paragraph after the current one, carrying its formatting so a
+   *  list keeps listing and a heading size does not leak into the body text. */
+  function splitParagraph(): void {
+    const cur = selectedParas()[0];
+    const attrs: Record<string, string> = {};
+    if (cur) {
+      for (const k of ['size', 'bold', 'italic', 'underline', 'align', 'indent', 'list'] as const) {
+        const v = cur.dataset[k];
+        if (v !== undefined) attrs[k] = v;
+      }
+    }
+    const next = newPara(attrs);
+    if (cur?.nextSibling) root.insertBefore(next, cur.nextSibling);
+    else root.appendChild(next);
+    ensureFillers();
+    renumber();
+    const range = document.createRange();
+    range.setStart(next, 0);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    lastParas = [next];
+    syncers.forEach((f) => f());
+  }
+
+  // contenteditable reports a newline as an insertParagraph intent, which
+  // covers the ways one can arrive that never surface as a plain Enter
+  // keydown — IME composition among them.
+  root.addEventListener('beforeinput', (e) => {
+    const ie = e as InputEvent;
+    if (ie.inputType !== 'insertParagraph' && ie.inputType !== 'insertLineBreak') return;
+    e.preventDefault();
+    splitParagraph();
+  });
   // Keep the structure sane after typing, deleting or pasting
-  root.addEventListener('input', () => renumber());
+  root.addEventListener('input', () => {
+    ensureFillers();
+    renumber();
+  });
   root.addEventListener('paste', (e) => {
     e.preventDefault();
     const text = e.clipboardData?.getData('text/plain') ?? '';
     document.execCommand('insertText', false, text);
   });
+  // Clicking anywhere outside the box ends the edit and KEEPS what was typed.
+  // Watched on the document rather than relying on blur: focus may already be
+  // sitting on a toolbar control, in which case the editor never blurs and the
+  // click would otherwise leave the edit hanging open.
+  const onDocDown = (e: PointerEvent): void => {
+    const t = e.target as Node | null;
+    if (t && (root.contains(t) || bar?.contains(t))) return;
+    finish(true);
+  };
+  // Armed on the next tick so the click that opened the editor cannot close it
+  setTimeout(() => document.addEventListener('pointerdown', onDocDown, true), 0);
+  docDown = onDocDown;
+
   root.addEventListener('blur', () => finish(true));
-  for (const ev of ['pointerdown', 'pointerup', 'pointermove', 'dblclick', 'wheel', 'contextmenu']) {
+  for (const ev of ['pointerup', 'pointermove', 'dblclick', 'wheel', 'contextmenu']) {
     root.addEventListener(ev, (e) => e.stopPropagation());
   }
+  // Clicking inside puts the caret where the click landed. The browser does
+  // that natively when the click hits a paragraph; when it lands in the blank
+  // space below the last one, aim at the nearest paragraph instead of leaving
+  // the caret wherever it happened to be.
+  root.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); // never let a click inside start a new markup
+    if (e.target !== root) return; // a paragraph was hit — the browser handles it
+    const paras = paragraphs();
+    if (!paras.length) return;
+    let best = paras[0]!;
+    let bestDist = Infinity;
+    for (const el of paras) {
+      const r = el.getBoundingClientRect();
+      const d = e.clientY < r.top ? r.top - e.clientY : e.clientY > r.bottom ? e.clientY - r.bottom : 0;
+      if (d < bestDist) {
+        bestDist = d;
+        best = el;
+      }
+    }
+    e.preventDefault();
+    root.focus();
+    const range = document.createRange();
+    range.selectNodeContents(best);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  });
 
   opts.host.appendChild(root);
   opts.host.appendChild(bar);
