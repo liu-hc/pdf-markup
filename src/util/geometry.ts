@@ -1,4 +1,4 @@
-import type { ArrowHead, LineStyle, Point } from '../state/types';
+import type { ArrowHead, LineStyle, Point, TextLeader } from '../state/types';
 import { ARCH_SCALES, ENG_SCALES, FULL_SCALE_LABEL } from '../state/types';
 
 /* ── Shared markup geometry ───────────────────────────────────────────────
@@ -187,6 +187,85 @@ export function dimensionGeometry(
   const d1 = { x: x1 + nx * offset, y: y1 + ny * offset };
   const d2 = { x: x2 + nx * offset, y: y2 + ny * offset };
   return { d1, d2, nx, ny, ux, uy, mid: { x: (d1.x + d2.x) / 2, y: (d1.y + d2.y) / 2 } };
+}
+
+/** Default flat-run length for a new leader, in points. */
+export const LEADER_RUN = 25;
+
+/** The leaders a text box carries.
+ *
+ *  Accepts both shapes: the `leaders` array, and the single anchor/kink a
+ *  markup made before multiple leaders existed still stores directly. Callers
+ *  only ever see the array, so nothing else has to know which it was. */
+export function leadersOf(m: {
+  textX: number;
+  textY: number;
+  textWidth: number;
+  textHeight: number;
+  anchorX?: number;
+  anchorY?: number;
+  kinkX?: number;
+  leaders?: TextLeader[];
+}): TextLeader[] {
+  if (m.leaders) return m.leaders;
+  if (m.anchorX === undefined || m.anchorY === undefined) return [];
+  const centerX = m.textX + m.textWidth / 2;
+  const side: TextLeader['side'] = m.anchorX >= centerX ? 'right' : 'left';
+  const edgeX = side === 'right' ? m.textX + m.textWidth : m.textX;
+  const run = m.kinkX !== undefined ? Math.abs(m.kinkX - edgeX) : LEADER_RUN;
+  return [{ anchorX: m.anchorX, anchorY: m.anchorY, side, run: Math.max(0, run) }];
+}
+
+/** Where one leader runs: out of its edge, to the elbow, then to the tip. */
+export function leaderPath(
+  box: { x: number; y: number; w: number; h: number },
+  leader: TextLeader,
+): { exit: Point; elbow: Point; anchor: Point } {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const exit =
+    leader.side === 'left'
+      ? { x: box.x, y: cy }
+      : leader.side === 'right'
+        ? { x: box.x + box.w, y: cy }
+        : leader.side === 'top'
+          ? { x: cx, y: box.y + box.h }
+          : { x: cx, y: box.y };
+  const dir =
+    leader.side === 'left'
+      ? { x: -1, y: 0 }
+      : leader.side === 'right'
+        ? { x: 1, y: 0 }
+        : leader.side === 'top'
+          ? { x: 0, y: 1 }
+          : { x: 0, y: -1 };
+  return {
+    exit,
+    elbow: { x: exit.x + dir.x * leader.run, y: exit.y + dir.y * leader.run },
+    anchor: { x: leader.anchorX, y: leader.anchorY },
+  };
+}
+
+/** Turn a dragged elbow position into a side + run.
+ *
+ *  Whichever axis the drag is furthest along wins, which is what makes the
+ *  elbow handle flip the leader between left, right, up and down. */
+export function leaderFromElbow(
+  box: { x: number; y: number; w: number; h: number },
+  p: Point,
+): { side: TextLeader['side']; run: number } {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const dx = p.x - cx;
+  const dy = p.y - cy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const side = dx >= 0 ? 'right' : 'left';
+    const edge = side === 'right' ? box.x + box.w : box.x;
+    return { side, run: Math.max(0, side === 'right' ? p.x - edge : edge - p.x) };
+  }
+  const side = dy >= 0 ? 'top' : 'bottom';
+  const edge = side === 'top' ? box.y + box.h : box.y;
+  return { side, run: Math.max(0, side === 'top' ? p.y - edge : edge - p.y) };
 }
 
 /** Elbow leader for a callout (page coordinates, y-up).

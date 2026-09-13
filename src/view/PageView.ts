@@ -1,5 +1,5 @@
 import { drawMarkupOnCanvas, hasMultiplyFill } from '../markups/draw';
-import { calloutLeader, dimensionGeometry } from '../util/geometry';
+import { dimensionGeometry, leaderPath, leadersOf } from '../util/geometry';
 import type { Markup, OverlaySlot, PageDefaults, Point } from '../state/types';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 
@@ -696,19 +696,24 @@ function getHandlePoints(markup: Markup): { id: string; x: number; y: number }[]
         { id: 'sw', x: markup.x, y: markup.y },
       ];
     case 'callout': {
-      const leader = calloutLeader(
-        markup.textX,
-        markup.textY,
-        markup.textWidth,
-        markup.textHeight,
-        markup.anchorX,
-        markup.anchorY,
-        markup.kinkX,
-        markup.kinkY,
-      );
+      const box = {
+        x: markup.textX,
+        y: markup.textY,
+        w: markup.textWidth,
+        h: markup.textHeight,
+      };
+      // One anchor and one elbow handle per leader, indexed so a drag knows
+      // which leader it belongs to. Dragging an elbow flips the leader between
+      // left / right / up / down; dragging an anchor moves that arrow tip.
+      const leaderHandles = leadersOf(markup).flatMap((l, i) => {
+        const path = leaderPath(box, l);
+        return [
+          { id: `anchor:${i}`, x: path.anchor.x, y: path.anchor.y },
+          { id: `elbow:${i}`, x: path.elbow.x, y: path.elbow.y },
+        ];
+      });
       return [
-        { id: 'anchor', x: markup.anchorX, y: markup.anchorY },
-        { id: 'kink', x: leader.kink.x, y: leader.kink.y },
+        ...leaderHandles,
         { id: 'nw', x: markup.textX, y: markup.textY + markup.textHeight },
         { id: 'ne', x: markup.textX + markup.textWidth, y: markup.textY + markup.textHeight },
         { id: 'se', x: markup.textX + markup.textWidth, y: markup.textY },

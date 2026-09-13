@@ -2642,3 +2642,42 @@ body.grabbing * {
   border-color: var(--accent-bright);
   color: #fff;
 }
+
+/* Leader count stepper on a text box's properties */
+.leader-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.leader-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--chrome-border-2);
+  border-radius: 6px;
+  background: var(--chrome-3);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-md);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t);
+}
+
+.leader-btn:hover:not(:disabled) {
+  background: var(--chrome-4);
+  border-color: var(--accent-bright);
+}
+
+.leader-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.leader-count {
+  min-width: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}

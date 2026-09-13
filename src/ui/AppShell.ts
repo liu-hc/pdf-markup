@@ -21,7 +21,7 @@ import type { ArrowHead } from '../state/types';
 import { openFilePicker, saveDocumentInteractive, flattenDocument, insertBlankPage, rotatePage, createBlankDocument, openDroppedFile, deletePage, copyPage, pastePage, hasPageClipboard } from '../pdf/loader';
 import { handleEditAction, HIGHLIGHT_SEED, HL_PEN_WIDTH } from '../tools/controller';
 import { resolveStyle } from '../markups/draw';
-import { scaleFactorForLabel } from '../util/geometry';
+import { LEADER_RUN, leaderPath, leadersOf, scaleFactorForLabel } from '../util/geometry';
 import { getSnapIndexSync, isSnapLoading } from '../pdf/vectorSnap';
 // User-guide illustrations (shared with the README)
 import guideWorkspace from '../../docs/graphics/workspace.png';
@@ -589,9 +589,9 @@ function showHelpDialog(): void {
     <div class="help-section"><h4>Annotate</h4>
       ${fig(guideAnnotate, 'Annotation tools: text box, callout, sticky note')}
       <ul>
-        <li><strong>Text (T)</strong> — two clicks size the box, then type directly on the sheet. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
+        <li><strong>Text Box (T)</strong> — two clicks: where it should point, then where the box goes — then type directly on the sheet. Remove its leader (below) for a plain text box. The box <strong>border</strong> uses the Line color, the glyphs use the <strong>Text</strong> color, and the background uses the <strong>Infill</strong> color — all three independent.</li>
         <li><strong>Paragraph formatting</strong> — the toolbar above a box being edited formats the paragraphs you have selected, so one box can hold a large bold heading, body text and a list. It offers text size, <strong>bold</strong>, <em>italic</em>, underline, four list styles (bullet •, circle ○, numbered 1. and lettered a.), indent, and per-paragraph alignment. Numbering restarts whenever the run breaks, so two lists in one box each start at 1. Its right-hand half sets the whole box: vertical alignment, line spacing and inner margin — those three also live in the properties panel.</li>
-        <li><strong>Callout (Q)</strong> — two clicks: arrow tip → text box, then type. The leader exits the box horizontally (default 25pt flat run) and bends at the elbow, which keeps its own drag handle for adjusting the distance.</li>
+        <li><strong>Leaders</strong> — a text box can point at things. The <strong>+</strong> and <strong>−</strong> beside <em>Leaders</em> in the properties panel add and remove them; at <strong>0</strong> it is simply a box of text, which is why there is no separate callout tool. Each leader has two handles: drag the <strong>arrow tip</strong> to re-aim it, and drag the <strong>elbow</strong> to swing the leader out of the left, right, top or bottom edge and set how far the flat run travels before it turns.</li>
         <li><strong>Sticky note</strong> — a folded-corner note icon whose comment text stays off the drawing; double-click to edit.</li>
       </ul>
     </div>
@@ -683,8 +683,7 @@ function wireRibbon(root: HTMLElement): void {
     {
       label: 'Annotation',
       tools: [
-        { id: 'text', label: 'Text', key: 'T' },
-        { id: 'callout', label: 'Callout', key: 'Q' },
+        { id: 'text', label: 'Text Box', key: 'T' },
       ],
     },
     {
@@ -1783,7 +1782,7 @@ function renderRightPanel(root: HTMLElement): void {
     const name = document.createElement('span');
     name.className = 'mk-name';
     // A user-given name replaces the type here — that's the point of naming
-    name.textContent = m.name ?? m.type;
+    name.textContent = m.name ?? TYPE_LABEL[m.type] ?? m.type;
     if (m.name) name.title = `${m.name} (${m.type})`;
     const idSpan = document.createElement('span');
     idSpan.className = 'mk-id';
@@ -1950,6 +1949,18 @@ const ROUND_TO_OPTIONS: { value: string; label: string }[] = [
 ];
 
 /** Markup type → TOOL_ICONS key, for the properties-panel header icon. */
+/** Display name for a markup type. `callout` is the text box that may carry
+ *  leaders — calling it a callout in the UI would be a distinction the tools
+ *  no longer make. */
+const TYPE_LABEL: Record<string, string> = {
+  callout: 'text box',
+  text: 'text box',
+  inkHighlight: 'highlight',
+  highlighter: 'highlight',
+  snipImage: 'snip',
+  measureAngle: 'angle',
+};
+
 const PROP_ICON: Record<string, string> = {
   rectangle: 'rectangle',
   highlighter: 'highlighter',
@@ -1960,7 +1971,7 @@ const PROP_ICON: Record<string, string> = {
   line: 'line',
   polyline: 'polyline',
   text: 'text',
-  callout: 'callout',
+  callout: 'text',
   sticky: 'sticky',
   dimension: 'dimension',
   measureAngle: 'measureAngle',
@@ -2297,6 +2308,16 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
     <label>Font <select data-prop="fontFamily">
       ${FONT_FAMILIES.map((f) => `<option value="${f}" ${f === fontFamily ? 'selected' : ''}>${f}</option>`).join('')}
     </select></label>`;
+    if (m.type === 'callout') {
+      const count = leadersOf(m).length;
+      textSection += `
+    <label class="leader-row">Leaders
+      <span class="leader-controls">
+        <button type="button" class="leader-btn" data-leader="remove" ${count === 0 ? 'disabled' : ''} title="Remove the last leader — at zero this is a plain text box">−</button>
+        <span class="leader-count">${count}</span>
+        <button type="button" class="leader-btn" data-leader="add" title="Add another leader">+</button>
+      </span></label>`;
+    }
     if (m.type === 'text' || m.type === 'callout') {
       const lineSpacing = m.overrides?.lineSpacing ?? 1.35;
       const border = m.overrides?.border ?? true;
@@ -2400,7 +2421,7 @@ function renderProperties(doc: ReturnType<typeof getActiveDoc>, selected: string
       <span class="prop-head-icon">${TOOL_ICONS[PROP_ICON[m.type] ?? ''] ?? ''}</span>
       ${isProto
         ? `<span class="prop-head-tool">${escapeAttr(m.type)}<em>settings for the next one</em></span>`
-        : `<input type="text" class="prop-name" data-prop="name" value="${escapeAttr(m.name ?? '')}" placeholder="${escapeAttr(m.type)}" title="Name this markup — the name replaces the type in the Markups list. Clear it to go back to the type." spellcheck="false">`}
+        : `<input type="text" class="prop-name" data-prop="name" value="${escapeAttr(m.name ?? '')}" placeholder="${escapeAttr(TYPE_LABEL[m.type] ?? m.type)}" title="Name this markup — the name replaces the type in the Markups list. Clear it to go back to the type." spellcheck="false">`}
     </div>
     <div class="prop-section-label">Appearance</div>
     <label>Line <button type="button" class="color-box pp-color" data-cprop="strokeColor" style="background:${stroke}" title="Line color"></button></label>
@@ -2534,6 +2555,34 @@ function wireProperties(props: HTMLElement, selectedId: string | undefined): voi
   const fillVal = props.querySelector<HTMLElement>('.fill-opacity-val');
   fillRange?.addEventListener('input', () => {
     if (fillVal) fillVal.textContent = `${Math.round(Number(fillRange.value) * 100)}%`;
+  });
+
+  // Leader count: + adds one, − removes the last. Dropping to zero leaves a
+  // plain text box, which is the whole point of merging the two tools — a
+  // callout is just a text box that points at something.
+  props.querySelectorAll<HTMLButtonElement>('[data-leader]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const doc = getActiveDoc();
+      const m = doc?.markups.find((mk) => mk.id === selectedId);
+      if (!doc || !m || m.type !== 'callout') return;
+      const leaders = [...leadersOf(m)];
+      if (btn.dataset.leader === 'remove') {
+        leaders.pop();
+      } else {
+        // A new leader lands clear of the box on the side with the fewest
+        // already, so two leaders never start stacked on each other.
+        const used = new Set(leaders.map((l) => l.side));
+        const side =
+          (['right', 'left', 'top', 'bottom'] as const).find((sd) => !used.has(sd)) ?? 'right';
+        const box = { x: m.textX, y: m.textY, w: m.textWidth, h: m.textHeight };
+        const probe = leaderPath(box, { anchorX: 0, anchorY: 0, side, run: LEADER_RUN * 3 });
+        leaders.push({ anchorX: probe.elbow.x, anchorY: probe.elbow.y, side, run: LEADER_RUN });
+      }
+      applyMarkupChange(
+        btn.dataset.leader === 'remove' ? 'Remove leader' : 'Add leader',
+        doc.markups.map((mk) => (mk.id === selectedId ? { ...mk, leaders } : mk)),
+      );
+    });
   });
 
   // "Set as Page Default": take the appearance actually in front of the user —

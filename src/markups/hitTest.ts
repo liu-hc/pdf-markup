@@ -1,5 +1,5 @@
 import type { Markup, Point } from '../state/types';
-import { dist, pointInRect, dimensionGeometry, calloutLeader } from '../util/geometry';
+import { dist, pointInRect, dimensionGeometry, leaderPath, leadersOf } from '../util/geometry';
 
 const HIT_TOLERANCE = 8;
 
@@ -63,20 +63,19 @@ export function hitTestMarkup(markup: Markup, p: Point, tolerance = HIT_TOLERANC
     case 'text':
       return pointInRect(p.x, p.y, markup.x, markup.y, markup.width, markup.height);
     case 'callout': {
-      const leader = calloutLeader(
-        markup.textX,
-        markup.textY,
-        markup.textWidth,
-        markup.textHeight,
-        markup.anchorX,
-        markup.anchorY,
-        markup.kinkX,
-      );
-      return (
-        pointInRect(p.x, p.y, markup.textX, markup.textY, markup.textWidth, markup.textHeight) ||
-        distToSegment(p, leader.exit, leader.kink) <= tolerance ||
-        distToSegment(p, leader.kink, { x: markup.anchorX, y: markup.anchorY }) <= tolerance
-      );
+      if (pointInRect(p.x, p.y, markup.textX, markup.textY, markup.textWidth, markup.textHeight)) {
+        return true;
+      }
+      const box = { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight };
+      // Every leader is grabbable, so a box with several can be picked up by
+      // any of them
+      return leadersOf(markup).some((l) => {
+        const path = leaderPath(box, l);
+        return (
+          distToSegment(p, path.exit, path.elbow) <= tolerance ||
+          distToSegment(p, path.elbow, path.anchor) <= tolerance
+        );
+      });
     }
     case 'sticky':
       return dist(p, { x: markup.x, y: markup.y }) <= 12;
@@ -133,6 +132,25 @@ export function getMarkupBounds(markup: Markup): { x: number; y: number; w: numb
       const minX = Math.min(...xs);
       const minY = Math.min(...ys);
       return { x: minX, y: minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY };
+    }
+    case 'callout': {
+      // The leaders are part of the markup, so the box alone would under-report
+      // its extent to marquee selection and to paste.
+      let minX = markup.textX;
+      let minY = markup.textY;
+      let maxX = markup.textX + markup.textWidth;
+      let maxY = markup.textY + markup.textHeight;
+      const box = { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight };
+      for (const l of leadersOf(markup)) {
+        const { elbow, anchor } = leaderPath(box, l);
+        for (const pt of [elbow, anchor]) {
+          minX = Math.min(minX, pt.x);
+          minY = Math.min(minY, pt.y);
+          maxX = Math.max(maxX, pt.x);
+          maxY = Math.max(maxY, pt.y);
+        }
+      }
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
     default:
       return { x: 0, y: 0, w: 0, h: 0 };

@@ -21,11 +21,12 @@ import {
   angleDegrees,
   arrowBarbs,
   arrowBodyInset,
-  calloutLeader,
   cloudOutline,
   dashPattern,
   dimensionGeometry,
   dist,
+  leaderPath,
+  leadersOf,
   ellipseBezier,
   polygonArea,
   polygonCentroid,
@@ -611,27 +612,20 @@ async function embedMarkup(
 
     case 'callout': {
       const box = { x: markup.textX, y: markup.textY, w: markup.textWidth, h: markup.textHeight };
-      const leader = calloutLeader(
-        box.x,
-        box.y,
-        box.w,
-        box.h,
-        markup.anchorX,
-        markup.anchorY,
-        markup.kinkX,
-        markup.kinkY,
-      );
-      const anchor = { x: markup.anchorX, y: markup.anchorY };
       const head = markup.arrowEnd ?? 'filled';
       // Callout heads use a 2.5x larger base than plain lines
       const size = lineWeight * 2.5 * (markup.arrowSize ?? 1);
-      // Elbow leader: out of the box edge, to the kink, then on to the anchor
-      line([
-        leader.exit,
-        leader.kink,
-        shortenToward(anchor, leader.kink, arrowBodyInset(head, size, lineWeight)),
-      ]);
-      drawArrowHead(page, anchor, leader.kink, head, size, stroke, lineOpacity, lineWeight);
+      // Any number of leaders, each out of its own edge; none at all is a
+      // plain text box.
+      for (const leader of leadersOf(markup)) {
+        const path = leaderPath(box, leader);
+        line([
+          path.exit,
+          path.elbow,
+          shortenToward(path.anchor, path.elbow, arrowBodyInset(head, size, lineWeight)),
+        ]);
+        drawArrowHead(page, path.anchor, path.elbow, head, size, stroke, lineOpacity, lineWeight);
+      }
 
       const corners = [
         { x: box.x, y: box.y },

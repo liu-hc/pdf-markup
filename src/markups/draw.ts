@@ -14,7 +14,8 @@ import {
   angleDegrees,
   dist,
   dimensionGeometry,
-  calloutLeader,
+  leaderPath,
+  leadersOf,
   arrowBarbs,
   arrowBodyInset,
   dashPattern,
@@ -455,51 +456,53 @@ export function drawMarkupOnCanvas(
       break;
     }
     case 'callout': {
-      // Bluebeam-style: bordered text box + leader line from the nearest box
-      // edge to the anchor point, ending in an arrowhead.
+      // A text box that may carry any number of leaders — each a flat run out
+      // of one edge, an elbow, then a diagonal to an arrow tip. With no
+      // leaders at all it is simply a box of text.
       const bx = markup.textX * scale;
       const by = (pageHeight - markup.textY - markup.textHeight) * scale;
       const bw = markup.textWidth * scale;
       const bh = markup.textHeight * scale;
-      const anchor = toScreen({ x: markup.anchorX, y: markup.anchorY });
       // Multiply pass: the box infill is all this markup contributes
       if (multiplyPass) {
         ctx.fillStyle = style.fill ?? 'rgba(255, 254, 245, 0.92)';
         paintFill(() => ctx.fillRect(bx, by, bw, bh));
         break;
       }
-      // Elbow leader: horizontal run out of the box at mid-height, kink,
-      // then a diagonal to the anchor
-      const leader = calloutLeader(
-        markup.textX,
-        markup.textY,
-        markup.textWidth,
-        markup.textHeight,
-        markup.anchorX,
-        markup.anchorY,
-        markup.kinkX,
-        markup.kinkY,
-      );
-      const exitS = toScreen(leader.exit);
-      const kinkS = toScreen(leader.kink);
-      // Callout arrows use a 2.5× larger base than lines, scaled by the multiplier
+      const box = {
+        x: markup.textX,
+        y: markup.textY,
+        w: markup.textWidth,
+        h: markup.textHeight,
+      };
+      // Callout arrows use a 2.5x larger base than lines, scaled by the multiplier
       const calloutArrow = style.lineWeight * scale * 2.5 * (markup.arrowSize ?? 1);
       const head = markup.arrowEnd ?? 'filled';
-      // Pull the leader back to meet the arrowhead (filled → base, open → tuck)
-      const anchorEnd = shortenToward(anchor, kinkS, arrowBodyInset(head, calloutArrow, style.lineWeight * scale));
-      ctx.beginPath();
-      ctx.moveTo(exitS.x, exitS.y);
-      ctx.lineTo(kinkS.x, kinkS.y);
-      ctx.lineTo(anchorEnd.x, anchorEnd.y);
-      ctx.stroke();
-      ctx.fillStyle = style.stroke;
-      drawArrow(ctx, anchor, kinkS, head, calloutArrow);
+      for (const leader of leadersOf(markup)) {
+        const path = leaderPath(box, leader);
+        const exitS = toScreen(path.exit);
+        const elbowS = toScreen(path.elbow);
+        const anchorS = toScreen(path.anchor);
+        // Pull the leader back to meet the arrowhead (filled -> base, open -> tuck)
+        const anchorEnd = shortenToward(
+          anchorS,
+          elbowS,
+          arrowBodyInset(head, calloutArrow, style.lineWeight * scale),
+        );
+        ctx.beginPath();
+        ctx.moveTo(exitS.x, exitS.y);
+        ctx.lineTo(elbowS.x, elbowS.y);
+        ctx.lineTo(anchorEnd.x, anchorEnd.y);
+        ctx.stroke();
+        ctx.fillStyle = style.stroke;
+        drawArrow(ctx, anchorS, elbowS, head, calloutArrow);
+      }
       // Box infill: user-chosen fill, else the cream default
       ctx.fillStyle = style.fill ?? 'rgba(255, 254, 245, 0.92)';
       paintFill(() => ctx.fillRect(bx, by, bw, bh));
       if (style.border) ctx.strokeRect(bx, by, bw, bh);
       ctx.fillStyle = style.textColor;
-      // Clip so text can never spill outside the callout box
+      // Clip so text can never spill outside the box
       ctx.save();
       ctx.beginPath();
       ctx.rect(bx, by, bw, bh);

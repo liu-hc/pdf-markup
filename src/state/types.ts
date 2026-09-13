@@ -214,6 +214,18 @@ export interface TextMarkup extends MarkupBase {
   paragraphs?: TextParagraph[];
 }
 
+/** One leader on a text box: a flat run out of an edge, then a diagonal to
+ *  the arrow tip. `side` is what the elbow handle drags between. */
+export interface TextLeader {
+  /** Arrow tip, page coords. */
+  anchorX: number;
+  anchorY: number;
+  /** Box edge the flat run leaves from. */
+  side: 'left' | 'right' | 'top' | 'bottom';
+  /** Length of that flat run, in points. */
+  run: number;
+}
+
 export interface CalloutMarkup extends MarkupBase {
   type: 'callout';
   textX: number;
@@ -233,6 +245,11 @@ export interface CalloutMarkup extends MarkupBase {
   kinkY?: number;
   /** Per-paragraph formatting — see TextMarkup.paragraphs. */
   paragraphs?: TextParagraph[];
+  /** Leaders on this box. Zero of them is a plain text box; the + and − in
+   *  the properties panel add and remove them. Undefined means the markup
+   *  predates multiple leaders and carries its single one in anchorX/anchorY
+   *  (+ kinkX) above — leadersOf() in util/geometry reads either shape. */
+  leaders?: TextLeader[];
 }
 
 export interface StickyMarkup extends MarkupBase {

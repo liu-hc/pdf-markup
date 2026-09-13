@@ -12,6 +12,7 @@ import {
 import type {
   AppearanceOverrides,
   CalloutMarkup,
+  TextLeader,
   TextParagraph,
   InkMarkup,
   Markup,
@@ -20,7 +21,7 @@ import type {
   TextMarkup,
   ToolId,
 } from '../state/types';
-import { normalizeRect, calloutLeader, dimensionGeometry, resolveCalibratedScale } from '../util/geometry';
+import { normalizeRect, calloutLeader, dimensionGeometry, leaderFromElbow, leadersOf, resolveCalibratedScale } from '../util/geometry';
 import { DEFAULT_TEXT_MARGIN } from '../state/types';
 import { findMarkupAtPoint, cloneMarkup, getMarkupBounds } from '../markups/hitTest';
 import { measureParagraphHeight, paragraphsOf } from '../markups/draw';
@@ -274,6 +275,16 @@ const CALLOUT_H = 48;
  *  afterwards by dragging the kink handle). */
 const CALLOUT_KINK_RUN = 25;
 
+/** A fresh leader aimed at `anchor`: it leaves whichever edge faces the tip,
+ *  with a flat run of CALLOUT_KINK_RUN. */
+function defaultLeader(
+  box: { x: number; y: number; w: number; h: number },
+  anchor: Point,
+): TextLeader {
+  const { side } = leaderFromElbow(box, anchor);
+  return { anchorX: anchor.x, anchorY: anchor.y, side, run: CALLOUT_KINK_RUN };
+}
+
 /** Default elbow: a flat CALLOUT_KINK_RUN out of the box edge facing the
  *  anchor, at the box's mid-height (the box→kink segment is always flat). */
 function defaultCalloutKink(
@@ -514,7 +525,7 @@ export function handlePointerDown(e: PointerEvent, ws: Workspace): void {
 
   // Callout, Dimension and Calibrate are discrete multi-click tools — clicks
   // are registered on pointerup.
-  if (tool === 'callout' || tool === 'dimension' || tool === 'calibrate') {
+  if (isTextTool(tool) || tool === 'dimension' || tool === 'calibrate') {
     e.preventDefault();
     return;
   }
@@ -615,7 +626,7 @@ export function handlePointerMove(e: PointerEvent, ws: Workspace): void {
   if (ws.contentEl.style.cursor !== wanted) ws.contentEl.style.cursor = wanted;
 
   // Callout: live leader/box preview between clicks
-  if (tool === 'callout' && calloutDraw) {
+  if (isTextTool(tool) && calloutDraw) {
     renderCalloutPreview(calloutDraw.pv.screenToPage(e.clientX, e.clientY));
     return;
   }
@@ -761,7 +772,7 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
   const tool = getState().activeTool;
 
   // Callout: discrete clicks (anchor → kink → text)
-  if (tool === 'callout') {
+  if (isTextTool(tool)) {
     const pv = ws.getPageViewAt(e.clientX, e.clientY) ?? calloutDraw?.pv ?? null;
     if (pv) handleCalloutClick(pv, pv.screenToPage(e.clientX, e.clientY));
     return;
@@ -828,15 +839,8 @@ export function handlePointerUp(e: PointerEvent, ws: Workspace): void {
       const pageIndex = draw.pageIndex;
       draw = { start: null, points: [], pageIndex: 0, pv: null };
       prevPv?.clearSvg();
-      if (tool === 'text') {
-        // Two clicks size the box; type the text inside it in place
-        const r = normalizeRect(a.x, a.y, b.x - a.x, b.y - a.y);
-        if (prevPv && r.width > 2 && r.height > 2) openTextBoxEditor(prevPv, pageIndex, r);
-        else returnToNavTool();
-      } else {
-        commitTwoClick(tool, a, b, e, pageIndex);
-        ws.redrawAllMarkups();
-      }
+      commitTwoClick(tool, a, b, e, pageIndex);
+      ws.redrawAllMarkups();
     }
     return;
   }
@@ -1131,7 +1135,14 @@ function isPolyTool(tool: ToolId): boolean {
 
 /** Rectangle / ellipse / text — placed with two clicks (opposite corners). */
 function isTwoClickTool(tool: ToolId): boolean {
-  return tool === 'rectangle' || tool === 'ellipse' || tool === 'text';
+  return tool === 'rectangle' || tool === 'ellipse';
+}
+
+/** The text-box tool. `callout` is kept as an alias so the old keyboard
+ *  shortcut and any saved tool state still land on it — they are one tool
+ *  now, and what it makes is a text box that may carry leaders. */
+function isTextTool(tool: ToolId): boolean {
+  return tool === 'text' || tool === 'callout';
 }
 
 /** Any tool whose geometry accumulates across multiple clicks. */
@@ -1366,7 +1377,6 @@ function startCalloutTextEntry(
       // The editor may have grown the box — place the default elbow relative
       // to the FINAL box so the flat run stays CALLOUT_KINK_RUN
       const finalBox = { x: topLeft.x, y: topLeft.y - size.h, w: size.w, h: size.h };
-      const finalKink = defaultCalloutKink(finalBox, anchor);
       const markup: CalloutMarkup = {
         id: uid(),
         type: 'callout',
@@ -1377,8 +1387,7 @@ function startCalloutTextEntry(
         textHeight: size.h,
         anchorX: anchor.x,
         anchorY: anchor.y,
-        kinkX: finalKink.x,
-        kinkY: finalKink.y,
+        leaders: [defaultLeader(finalBox, anchor)],
         content: textFromParagraphs(paras),
         paragraphs: paras,
         arrowEnd: 'filled',
@@ -1505,44 +1514,6 @@ async function askAndApplyCalibration(pv: PageView, pageIndex: number, len: numb
   returnToNavTool();
 }
 
-// ── Text box (2-click box + in-place typing, like the callout) ───────────────
-
-function openTextBoxEditor(
-  pv: PageView,
-  pageIndex: number,
-  rect: { x: number; y: number; width: number; height: number },
-): void {
-  const color = previewColor(pageIndex);
-  // Show the box outline while typing
-  pv.drawCalloutGuide([], { x: rect.x, y: rect.y, w: rect.width, h: rect.height }, color, null);
-  editBoxText({
-    pv,
-    pageIndex,
-    box: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
-    paragraphs: [],
-    overrides: undefined,
-    transparent: true,
-    onCommit: (paras, size, boxFmt) => {
-      pv.clearSvg();
-      const top = rect.y + rect.height;
-      const markup: TextMarkup = {
-        id: uid(),
-        type: 'text',
-        pageIndex,
-        x: rect.x,
-        y: top - size.h, // keep the box top anchored if the editor grew
-        width: size.w,
-        height: size.h,
-        content: textFromParagraphs(paras),
-        paragraphs: paras,
-        overrides: boxFmtToOverrides(boxFmt),
-      };
-      applyMarkupChange('Add text', [...docMarkups(), withToolDefaults('text', markup)]);
-    },
-    onCancel: () => pv.clearSvg(),
-  });
-}
-
 async function captureSnip(a: Point, b: Point, pageIndex: number, _ws: Workspace): Promise<void> {
   const pv = draw.pv;
   if (!pv) return;
@@ -1657,14 +1628,10 @@ function applyRotate(m: Markup, start: Point, cur: Point, shift: boolean): Marku
  *  translateMarkup, which moves the whole markup together. */
 function dragMarkup(m: Markup, dx: number, dy: number): Markup {
   if (m.type !== 'callout') return translateMarkup(m, dx, dy);
-  return {
-    ...m,
-    textX: m.textX + dx,
-    textY: m.textY + dy,
-    // The elbow travels with the box so the flat run keeps its length
-    kinkX: m.kinkX !== undefined ? m.kinkX + dx : undefined,
-    kinkY: m.kinkY !== undefined ? m.kinkY + dy : undefined,
-  };
+  // Only the box moves. Each leader keeps its side and run, so the flat run
+  // travels with the box while every arrow tip stays on what it was pointing
+  // at and its diagonal re-aims itself.
+  return { ...m, textX: m.textX + dx, textY: m.textY + dy, leaders: leadersOf(m) };
 }
 
 function translateMarkup(m: Markup, dx: number, dy: number): Markup {
@@ -1690,10 +1657,7 @@ function translateMarkup(m: Markup, dx: number, dy: number): Markup {
         ...m,
         textX: m.textX + dx,
         textY: m.textY + dy,
-        anchorX: m.anchorX + dx,
-        anchorY: m.anchorY + dy,
-        kinkX: m.kinkX !== undefined ? m.kinkX + dx : undefined,
-        kinkY: m.kinkY !== undefined ? m.kinkY + dy : undefined,
+        leaders: leadersOf(m).map((l) => ({ ...l, anchorX: l.anchorX + dx, anchorY: l.anchorY + dy })),
       };
     case 'measureAngle':
       return {
@@ -1784,10 +1748,22 @@ function applyHandleDrag(m: Markup, handle: string, p: Point, shift: boolean): M
       return { ...m, points: m.points.map((pt, i) => (i === idx ? { x: p.x, y: p.y } : pt)) };
     }
     case 'callout': {
-      if (handle === 'anchor') return { ...m, anchorX: p.x, anchorY: p.y };
-      // Elbow handle: slides horizontally only — it just sets the length of the
-      // horizontal run out of the box (the box→elbow segment stays horizontal)
-      if (handle === 'kink') return { ...m, kinkX: p.x };
+      const box = { x: m.textX, y: m.textY, w: m.textWidth, h: m.textHeight };
+      // Leader handles are indexed, since a box can carry several
+      const [kind, idxRaw] = handle.split(':');
+      if (kind === 'anchor' || kind === 'elbow') {
+        const idx = Number(idxRaw);
+        const leaders = leadersOf(m).map((l, i) => {
+          if (i !== idx) return l;
+          if (kind === 'anchor') return { ...l, anchorX: p.x, anchorY: p.y };
+          // Dragging the elbow picks the edge the run leaves from — whichever
+          // axis the drag is furthest along — and how long that run is. That
+          // is what turns the leader to point left, right, up or down.
+          const { side, run } = leaderFromElbow(box, p);
+          return { ...l, side, run };
+        });
+        return { ...m, leaders };
+      }
       const r = resizeRectByHandle(
         { x: m.textX, y: m.textY, width: m.textWidth, height: m.textHeight },
         handle,
@@ -2166,7 +2142,6 @@ function openCalloutEditor(
         );
       } else {
         const nb = { x: textAt.x, y: textAt.y - size.h, w: size.w, h: size.h };
-        const nk = defaultCalloutKink(nb, anchor);
         const markup: CalloutMarkup = {
           id: uid(),
           type: 'callout',
@@ -2177,8 +2152,7 @@ function openCalloutEditor(
           textHeight: size.h,
           anchorX: anchor.x,
           anchorY: anchor.y,
-          kinkX: nk.x,
-          kinkY: nk.y,
+          leaders: [defaultLeader(nb, anchor)],
           content,
           paragraphs: paras,
           arrowEnd: 'filled',
